@@ -3,12 +3,14 @@
 #include <include/Ling.h>
 #include "CutMask.h"
 #include "../Util.h"
+#include "../Setting.h"
 #include "../WeShotOcr.h"
 using namespace Microsoft::WRL;
 
 CutMask::CutMask(Ling::WinBase* win) :win{ win }
 {
-	strokeWidth = 2 * win->dpi;
+	auto borderWidth = std::clamp(Setting::get()->getToolNum(L"capture", L"borderWidth", 2.f), 1.f, 8.f);
+	strokeWidth = borderWidth * win->dpi;
 	paddingTop *= win->dpi;
 	paddingMargin *= win->dpi;
 	auto d2d = Ling::D2D::get();
@@ -126,9 +128,6 @@ MaskHit CutMask::hitTest(POINT pos) const
 
 void CutMask::startAdjust(POINT pos)
 {
-	// OCR is an integrated child of the same WinCap window. Mouse events therefore still reach
-	// WinCap; without this guard a click on "复制全部" or inside the text box is misread as a
-	// capture-resize gesture. Treat the OCR panel as UI, not as part of the adjustable canvas.
 	if (WeShotOcr::containsPoint(pos)) {
 		adjustHit = MaskHit::None;
 		return;
