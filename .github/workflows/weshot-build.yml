@@ -76,6 +76,18 @@ jobs:
 
           Set-Content Src\GeminiClient.h $gemini -Encoding utf8
 
+          # Fail the build rather than publishing an executable with an invalid 3.7 Flash latency profile.
+          $verified = Get-Content Src\GeminiClient.h -Raw
+          if ($verified.Contains('model.find(L"flash") != std::wstring::npos ? L"minimal" : L"low"')) {
+            throw 'Gemini 3.7 Flash minimal-thinking compatibility patch did not apply.'
+          }
+          if (-not $verified.Contains('thinking.SetNamedValue(L"thinkingLevel", JsonValue::CreateStringValue(L"low"))')) {
+            throw 'Gemini low-thinking setting is missing after compatibility patch.'
+          }
+          if (-not $verified.Contains('generation.SetNamedValue(L"mediaResolution", JsonValue::CreateStringValue(L"MEDIA_RESOLUTION_MEDIUM"))')) {
+            throw 'Gemini medium media-resolution setting is missing after compatibility patch.'
+          }
+
       - name: Build ScreenCapture
         shell: pwsh
         run: |
