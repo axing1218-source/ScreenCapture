@@ -31,9 +31,10 @@ namespace WeShotOcr
         Ling::Node* panel{ nullptr };
         Ling::Label* title{ nullptr };
         Ling::Label* status{ nullptr };
-        Ling::TextBox* textBox{ nullptr };
         Ling::Button* copyBtn{ nullptr };
         Ling::Button* closeBtn{ nullptr };
+        HWND edit{ nullptr };
+        std::wstring text;
         std::vector<WordBlock> words;
         std::atomic<unsigned long long> requestId{ 0 };
         bool busy{ false };
@@ -45,6 +46,50 @@ namespace WeShotOcr
     {
         if (!state.panel || !state.win) return false;
         return state.panel->isPosIn(pos);
+    }
+
+    inline bool copyTextReliable(const std::wstring& text)
+    {
+        if (text.empty()) return false;
+        HWND owner = state.win ? state.win->hwnd : nullptr;
+        bool opened = false;
+        for (int i = 0; i < 8; ++i) {
+            if (OpenClipboard(owner)) {
+                opened = true;
+                break;
+            }
+            Sleep(8);
+        }
+        if (!opened) return false;
+
+        bool ok = false;
+        if (EmptyClipboard()) {
+            const SIZE_T bytes = (text.size() + 1) * sizeof(wchar_t);
+            HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes);
+            if (mem) {
+                auto dst = static_cast<wchar_t*>(GlobalLock(mem));
+                if (dst) {
+                    memcpy(dst, text.c_str(), text.size() * sizeof(wchar_t));
+                    dst[text.size()] = L'\0';
+                    GlobalUnlock(mem);
+                    if (SetClipboardData(CF_UNICODETEXT, mem)) {
+                        ok = true;
+                        mem = nullptr; // clipboard owns it now
+                    }
+                }
+                if (mem) GlobalFree(mem);
+            }
+        }
+        CloseClipboard();
+        return ok;
+    }
+
+    inline void setEditText(const std::wstring& text)
+    {
+        state.text = text;
+        if (!state.edit || !IsWindow(state.edit)) return;
+        SetWindowTextW(state.edit, text.c_str());
+        SendMessageW(state.edit, EM_SETSEL, 0, 0);
     }
 
     inline void layoutPanel()
@@ -60,20 +105,44 @@ namespace WeShotOcr
         const float bottom = r.bottom / dpi;
 
         constexpr float panelW = 330.f;
-        // Keep the OCR panel visually attached to the capture: same top edge and same height.
         const float panelH = (std::max)(1.f, bottom - top);
 
         float px = right;
         if (px + panelW > deskW) px = left - panelW;
         if (px < 0.f) {
-            // Full-width / very wide selections have no free side space. Overlay on the right edge,
-            // but still keep exactly the same vertical span as the selected screenshot.
             px = (std::max)(0.f, right - panelW);
         }
 
         state.panel->setSize(panelW, panelH);
         state.panel->setPosition(Ling::Edge::Left, px);
         state.panel->setPosition(Ling::Edge::Top, top);
+
+        // The recognized text is a native read-only EDIT control. Unlike the old composited
+        // TextBox it is clipped by its own HWND, so a very short capture can never paint text
+        // beyond the OCR panel. It also gives standard Windows selection / Ctrl+C behavior.
+        if (state.edit && IsWindow(state.edit)) {
+            constexpr float pad = 8.f;
+            constexpr float headerH = 30.f;
+            const bool compact = panelH < 130.f;
+            const float statusH = compact ? 0.f : 22.f;
+            const float gap = compact ? 4.f : 6.f;
+
+            if (state.status) {
+                if (compact) state.status->hide();
+                else state.status->show();
+            }
+
+            const float editTop = top + pad + headerH + statusH + gap;
+            const float editH = (std::max)(1.f, panelH - (editTop - top) - pad);
+            const int ex = (int)std::round((px + pad) * dpi);
+            const int ey = (int)std::round(editTop * dpi);
+            const int ew = (std::max)(1, (int)std::round((panelW - pad * 2.f) * dpi));
+            const int eh = (std::max)(1, (int)std::round(editH * dpi));
+
+            SetWindowPos(state.edit, HWND_TOP, ex, ey, ew, eh,
+                SWP_NOACTIVATE | ((eh >= 8) ? SWP_SHOWWINDOW : 0));
+            if (eh < 8) ShowWindow(state.edit, SW_HIDE);
+        }
     }
 
     inline bool copyCutPixels(WinCap* win, std::vector<BYTE>& pixels, int& outW, int& outH)
@@ -171,6 +240,7 @@ namespace WeShotOcr
         if (!win) return;
         if (state.win == win && state.panel) {
             state.panel->show();
+            if (state.edit && IsWindow(state.edit)) ShowWindow(state.edit, SW_SHOWNA);
             layoutPanel();
             return;
         }
@@ -179,10 +249,9 @@ namespace WeShotOcr
         state.panel = win->body->makeChild<Ling::Node>();
         state.panel->setPositionType(Ling::Position::Absolute);
         state.panel->setFlexDirection(Ling::FlexDirection::Column);
-        state.panel->setPadding(12.f);
+        state.panel->setPadding(8.f);
         state.panel->setBg(0xFFFFFFFF);
         state.panel->setBorder(1.f, 0xD4D4D4FF);
-        // No floating-card rounded corners: the panel should read as an extension of the capture.
         state.panel->setBorderRadius(0.f);
 
         auto header = state.panel->makeChild<Ling::Node>();
@@ -208,7 +277,8 @@ namespace WeShotOcr
         state.copyBtn->setBorderRadius(5.f);
         state.copyBtn->setMarginRight(6.f);
         state.copyBtn->onClick.add([](Ling::Button*) {
-            if (state.textBox) Ling::Util::setTextToClipboard(state.textBox->getText());
+            const bool ok = copyTextReliable(state.text);
+            if (state.status) state.status->setText(ok ? L"已复制全部文字" : L"复制失败，请重试");
         });
 
         state.closeBtn = header->makeChild<Ling::Button>();
@@ -220,24 +290,29 @@ namespace WeShotOcr
         state.closeBtn->setBorderRadius(5.f);
         state.closeBtn->onClick.add([](Ling::Button*) {
             if (state.panel) state.panel->hide();
+            if (state.edit && IsWindow(state.edit)) ShowWindow(state.edit, SW_HIDE);
         });
 
         state.status = state.panel->makeChild<Ling::Label>();
         state.status->setText(L"");
+        state.status->setHeight(22.f);
+        state.status->setFlexShrink(0.f);
         state.status->setFontSize(12.f);
         state.status->setColor(0x888888FF);
-        state.status->setMarginTop(4.f);
-        state.status->setMarginBottom(6.f);
 
-        state.textBox = state.panel->makeChild<Ling::TextBox>();
-        state.textBox->setWidthPercent(100.f);
-        state.textBox->setFlexGrow(1.f);
-        state.textBox->setFontSize(14.f);
-        state.textBox->setPadding(9.f);
-        state.textBox->setBg(0xFAFAFAFF);
-        state.textBox->setBorder(1.f, 0xE3E3E3FF);
-        state.textBox->setBorderRadius(4.f);
-        state.textBox->setSelectionBgColor(0xB8DDF799);
+        // Native read-only multi-line edit: standard Windows mouse selection, scroll wheel,
+        // Ctrl+A / Ctrl+C and strict clipping inside its own rectangle.
+        state.edit = CreateWindowExW(
+            WS_EX_CLIENTEDGE,
+            L"EDIT", L"",
+            WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_READONLY |
+            ES_AUTOVSCROLL | ES_NOHIDESEL,
+            0, 0, 10, 10,
+            win->hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (state.edit) {
+            SendMessageW(state.edit, WM_SETFONT, (WPARAM)GetStockObject(DEFAULT_GUI_FONT), TRUE);
+            SendMessageW(state.edit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(8, 8));
+        }
 
         win->onMouseMove.add([](POINT) {
             if (state.panel) layoutPanel();
@@ -247,19 +322,22 @@ namespace WeShotOcr
         });
         win->onDestroy.add([]() {
             state.requestId.fetch_add(1);
+            if (state.edit && IsWindow(state.edit)) DestroyWindow(state.edit);
             state.win = nullptr;
             state.panel = nullptr;
             state.title = nullptr;
             state.status = nullptr;
-            state.textBox = nullptr;
             state.copyBtn = nullptr;
             state.closeBtn = nullptr;
+            state.edit = nullptr;
+            state.text.clear();
             state.words.clear();
             state.busy = false;
         });
 
         layoutPanel();
         state.panel->show();
+        if (state.edit && IsWindow(state.edit)) ShowWindow(state.edit, SW_SHOWNA);
         win->refresh();
     }
 
@@ -267,36 +345,38 @@ namespace WeShotOcr
     {
         if (!win || !win->cutMask || !win->cutMask->hasRect()) return;
         ensurePanel(win);
-        if (!state.textBox || state.busy) return;
+        if (!state.edit || state.busy) return;
 
         std::vector<BYTE> pixels;
         int width{ 0 }, height{ 0 };
         if (!copyCutPixels(win, pixels, width, height)) {
-            state.status->setText(L"读取截图失败");
-            state.textBox->setText(L"");
+            if (state.status) state.status->setText(L"读取截图失败");
+            setEditText(L"");
             return;
         }
 
         state.busy = true;
-        state.status->setText(L"正在识别...");
-        state.textBox->setText(L"");
+        if (state.status) state.status->setText(L"正在识别...");
+        setEditText(L"");
         const auto myRequest = ++state.requestId;
 
         std::thread([pixels = std::move(pixels), width, height, myRequest, win]() mutable {
             auto result = recognize(std::move(pixels), width, height);
             Ling::App::get()->dq.TryEnqueue([result = std::move(result), myRequest, win]() mutable {
-                if (state.win != win || state.requestId.load() != myRequest || !state.textBox) return;
+                if (state.win != win || state.requestId.load() != myRequest || !state.edit) return;
                 state.busy = false;
                 state.words = std::move(result.words);
                 if (!result.error.empty()) {
-                    state.status->setText(result.error);
-                    state.textBox->setText(L"");
+                    if (state.status) state.status->setText(result.error);
+                    setEditText(L"");
                 }
                 else {
-                    state.status->setText(std::format(L"已识别 {} 个文字块", state.words.size()));
-                    state.textBox->setText(result.text);
+                    if (state.status) state.status->setText(L"可拖选任意文字，按 Ctrl+C 复制");
+                    setEditText(result.text);
                 }
                 if (state.panel) state.panel->show();
+                if (state.edit && IsWindow(state.edit)) ShowWindow(state.edit, SW_SHOWNA);
+                layoutPanel();
             });
         }).detach();
     }
