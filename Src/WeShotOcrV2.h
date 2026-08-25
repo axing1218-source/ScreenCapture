@@ -16,12 +16,6 @@
 #include "Setting.h"
 #include "GeminiClient.h"
 
-// WeShot OCR + Gemini result flow.
-//
-// The local OCR remains a lightweight fallback for the initial "文字识别" view. Translation is
-// image-first: the captured pixels are sent directly to Gemini, which returns translated text and
-// normalized text-region boxes. WeShot then paints the translated strings back over those regions.
-// showPixels() keeps long screenshots on exactly the same result-window path.
 namespace WeShotOcrV2
 {
     struct Result
@@ -43,7 +37,6 @@ namespace WeShotOcrV2
             Sleep(8);
         }
         if (!opened) return false;
-
         bool ok = false;
         if (EmptyClipboard()) {
             const SIZE_T bytes = (text.size() + 1) * sizeof(wchar_t);
@@ -54,10 +47,7 @@ namespace WeShotOcrV2
                     memcpy(dst, text.c_str(), text.size() * sizeof(wchar_t));
                     dst[text.size()] = L'\0';
                     GlobalUnlock(mem);
-                    if (SetClipboardData(CF_UNICODETEXT, mem)) {
-                        ok = true;
-                        mem = nullptr;
-                    }
+                    if (SetClipboardData(CF_UNICODETEXT, mem)) { ok = true; mem = nullptr; }
                 }
                 if (mem) GlobalFree(mem);
             }
@@ -71,34 +61,24 @@ namespace WeShotOcrV2
         if (!win) return false;
         auto img = win->getCutImg();
         if (!img) return false;
-
         const auto size = img->GetPixelSize();
         if (!size.width || !size.height) return false;
-        outW = static_cast<int>(size.width);
-        outH = static_cast<int>(size.height);
-
+        outW = (int)size.width; outH = (int)size.height;
         D2D1_BITMAP_PROPERTIES1 prop{};
         prop.pixelFormat = img->GetPixelFormat();
-        prop.dpiX = 96.f;
-        prop.dpiY = 96.f;
+        prop.dpiX = 96.f; prop.dpiY = 96.f;
         prop.bitmapOptions = D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW;
-
         Microsoft::WRL::ComPtr<ID2D1Bitmap1> cpu;
         auto ctx = Ling::D2D::get()->deviceContext;
-        auto hr = ctx->CreateBitmap(size, nullptr, 0, &prop, cpu.GetAddressOf());
-        if (FAILED(hr) || !cpu) return false;
-        hr = cpu->CopyFromBitmap(nullptr, img.Get(), nullptr);
-        if (FAILED(hr)) return false;
-
+        if (FAILED(ctx->CreateBitmap(size, nullptr, 0, &prop, cpu.GetAddressOf())) || !cpu) return false;
+        if (FAILED(cpu->CopyFromBitmap(nullptr, img.Get(), nullptr))) return false;
         D2D1_MAPPED_RECT mapped{};
-        hr = cpu->Map(D2D1_MAP_OPTIONS_READ, &mapped);
-        if (FAILED(hr) || !mapped.bits) return false;
-
-        const size_t rowBytes = static_cast<size_t>(outW) * 4;
-        pixels.resize(rowBytes * static_cast<size_t>(outH));
+        if (FAILED(cpu->Map(D2D1_MAP_OPTIONS_READ, &mapped)) || !mapped.bits) return false;
+        const size_t rowBytes = (size_t)outW * 4;
+        pixels.resize(rowBytes * (size_t)outH);
         for (int row = 0; row < outH; ++row) {
-            memcpy(pixels.data() + static_cast<size_t>(row) * rowBytes,
-                mapped.bits + static_cast<size_t>(row) * mapped.pitch, rowBytes);
+            memcpy(pixels.data() + (size_t)row * rowBytes,
+                mapped.bits + (size_t)row * mapped.pitch, rowBytes);
         }
         cpu->Unmap();
         return true;
@@ -111,39 +91,30 @@ namespace WeShotOcrV2
         try {
             winrt::init_apartment(winrt::apartment_type::multi_threaded);
             apartmentReady = true;
-
             using namespace winrt::Windows::Storage::Streams;
             using namespace winrt::Windows::Graphics::Imaging;
             using namespace winrt::Windows::Media::Ocr;
-
-            const uint32_t byteCount = static_cast<uint32_t>(pixels.size());
-            Buffer buffer(byteCount);
-            buffer.Length(byteCount);
+            const uint32_t byteCount = (uint32_t)pixels.size();
+            Buffer buffer(byteCount); buffer.Length(byteCount);
             auto byteAccess = buffer.as<::Windows::Storage::Streams::IBufferByteAccess>();
             BYTE* dst{ nullptr };
             winrt::check_hresult(byteAccess->Buffer(&dst));
             memcpy(dst, pixels.data(), pixels.size());
-
             SoftwareBitmap bitmap(BitmapPixelFormat::Bgra8, width, height, BitmapAlphaMode::Ignore);
             bitmap.CopyFromBuffer(buffer);
-
             auto engine = OcrEngine::TryCreateFromUserProfileLanguages();
-            if (!engine) {
-                result.error = L"当前 Windows 没有可用的 OCR 语言包。";
-            }
+            if (!engine) result.error = L"当前 Windows 没有可用的 OCR 语言包。";
             else {
                 auto ocr = engine.RecognizeAsync(bitmap).get();
-                bool firstLine = true;
+                bool first = true;
                 for (auto const& line : ocr.Lines()) {
-                    if (!firstLine) result.text += L"\r\n";
-                    firstLine = false;
+                    if (!first) result.text += L"\r\n";
+                    first = false;
                     result.text += line.Text().c_str();
                 }
                 if (result.text.empty()) result.error = L"没有识别到文字。";
             }
-
-            winrt::uninit_apartment();
-            apartmentReady = false;
+            winrt::uninit_apartment(); apartmentReady = false;
         }
         catch (const winrt::hresult_error& e) {
             result.error = std::wstring(L"OCR 失败：") + e.message().c_str();
@@ -166,11 +137,8 @@ namespace WeShotOcrV2
             setSize(1120.f, 700.f);
             setMinSize(800.f, 460.f);
             setCenter();
-
             onMouseDown.add([this](POINT pos, bool isRight) {
-                if (isRight && imageCanvas && imageCanvas->isPosIn(pos)) {
-                    showImageContextMenu();
-                }
+                if (isRight && imageCanvas && imageCanvas->isPosIn(pos)) showImageContextMenu();
             });
             onSizeChanged.add([this]() { refresh(); });
             onDestroy.add([this]() {
@@ -186,27 +154,43 @@ namespace WeShotOcrV2
             });
         }
 
-        void open()
-        {
-            createNativeWindow(0, WS_OVERLAPPEDWINDOW);
-        }
+        void open() { createNativeWindow(0, WS_OVERLAPPEDWINDOW); }
 
-        void setOcrResult(Result result)
+        void setLocalOcrResult(Result result)
         {
             if (!textBox || !status) return;
+            geminiOcrBlocks.clear();
             if (!result.error.empty()) {
-                status->setText(L"本地文字识别完成；仍可直接点击“翻译”让 Gemini 识别图片");
-                textBox->setPlaceholder(L"");
-                textBox->setText(result.error);
                 originalText.clear();
+                textBox->setText(result.error);
+                status->setText(L"未设置 Gemini API Key，当前使用 Windows OCR");
             }
             else {
                 originalText = std::move(result.text);
-                showingTranslationText = false;
-                status->setText(L"可拖选原文复制；点击“翻译”后图片会直接显示译文");
-                textBox->setPlaceholder(L"");
                 textBox->setText(originalText);
+                status->setText(L"未设置 Gemini API Key，当前使用 Windows OCR；可在设置中填写 Key");
             }
+            textBox->setPlaceholder(L"");
+            showingTranslationText = false;
+            refresh();
+        }
+
+        void setGeminiOcrResult(GeminiClient::OcrResult result)
+        {
+            if (!textBox || !status) return;
+            if (!result.ok) {
+                originalText.clear(); geminiOcrBlocks.clear();
+                textBox->setPlaceholder(L"");
+                textBox->setText(result.error.empty() ? L"Gemini OCR 失败。" : result.error);
+                status->setText(L"Gemini 文字识别失败；不会静默退回低准确率 OCR");
+                return;
+            }
+            originalText = std::move(result.text);
+            geminiOcrBlocks = std::move(result.blocks);
+            showingTranslationText = false;
+            textBox->setPlaceholder(L"");
+            textBox->setText(originalText);
+            status->setText(L"Gemini 文字识别完成；可拖选文字复制，点击“翻译”继续");
             refresh();
         }
 
@@ -219,20 +203,12 @@ namespace WeShotOcrV2
                 if (translateBtn) translateBtn->setText(L"翻译");
                 return;
             }
-
             translatedText = std::move(result.translatedText);
             translationBlocks = std::move(result.blocks);
             translationReady = true;
-            showTranslatedImage = true;
-            showingTranslationText = true;
-
             if (originalTab) originalTab->show();
             if (translatedTab) translatedTab->show();
-            if (translateBtn) translateBtn->setText(L"重新翻译");
-            updateTextTabs();
-            textBox->setText(translatedText);
-            status->setText(L"翻译完成：左侧已显示译文；右侧可在“原文 / 译文”之间切换复制");
-            refresh();
+            showMode(true);
         }
 
     protected:
@@ -240,55 +216,30 @@ namespace WeShotOcrV2
         {
             body->setBg(0xF4F4F4FF);
             body->setFlexDirection(Ling::FlexDirection::Row);
-
             imageCanvas = body->makeChild<Ling::Canvas>();
             imageCanvas->setFlexGrow(1.f);
             imageCanvas->setHeightPercent(100.f);
             imageCanvas->setBg(0xF2F2F2FF);
-
             auto divider = body->makeChild<Ling::Node>();
-            divider->setWidth(1.f);
-            divider->setHeightPercent(100.f);
-            divider->setBg(0xD9D9D9FF);
-
+            divider->setWidth(1.f); divider->setHeightPercent(100.f); divider->setBg(0xD9D9D9FF);
             auto right = body->makeChild<Ling::Node>();
-            right->setWidth(430.f);
-            right->setHeightPercent(100.f);
-            right->setPadding(12.f);
-            right->setBg(0xFFFFFFFF);
-            right->setFlexDirection(Ling::FlexDirection::Column);
+            right->setWidth(430.f); right->setHeightPercent(100.f); right->setPadding(12.f);
+            right->setBg(0xFFFFFFFF); right->setFlexDirection(Ling::FlexDirection::Column);
 
             auto header = right->makeChild<Ling::Node>();
-            header->setHeight(38.f);
-            header->setWidthPercent(100.f);
-            header->setFlexDirection(Ling::FlexDirection::Row);
-            header->setAlignItems(Ling::Align::Center);
-
+            header->setHeight(38.f); header->setWidthPercent(100.f);
+            header->setFlexDirection(Ling::FlexDirection::Row); header->setAlignItems(Ling::Align::Center);
             auto title = header->makeChild<Ling::Label>();
-            title->setText(L"文字识别");
-            title->setFontSize(16.f);
-            title->setColor(0x222222FF);
-            title->setFlexGrow(1.f);
-
+            title->setText(L"文字识别"); title->setFontSize(16.f); title->setColor(0x222222FF); title->setFlexGrow(1.f);
             auto annotate = header->makeChild<Ling::Button>();
-            annotate->setText(L"标注图片");
-            annotate->setSize(76.f, 28.f);
-            annotate->setFontSize(12.f);
-            annotate->setBg(0xF3F3F3FF);
-            annotate->setHoverBg(0xE9E9E9FF);
-            annotate->setBorder(1.f, 0xDDDDDDFF);
-            annotate->setBorderRadius(4.f);
-            annotate->setMarginRight(8.f);
+            annotate->setText(L"标注图片"); annotate->setSize(76.f, 28.f); annotate->setFontSize(12.f);
+            annotate->setBg(0xF3F3F3FF); annotate->setHoverBg(0xE9E9E9FF);
+            annotate->setBorder(1.f, 0xDDDDDDFF); annotate->setBorderRadius(4.f); annotate->setMarginRight(8.f);
             annotate->onClick.add([this](Ling::Button*) { openAnnotationEditor(); });
-
             auto copyAll = header->makeChild<Ling::Button>();
-            copyAll->setText(L"复制全部");
-            copyAll->setSize(76.f, 28.f);
-            copyAll->setFontSize(12.f);
-            copyAll->setBg(0xF3F3F3FF);
-            copyAll->setHoverBg(0xE9E9E9FF);
-            copyAll->setBorder(1.f, 0xDDDDDDFF);
-            copyAll->setBorderRadius(4.f);
+            copyAll->setText(L"复制全部"); copyAll->setSize(76.f, 28.f); copyAll->setFontSize(12.f);
+            copyAll->setBg(0xF3F3F3FF); copyAll->setHoverBg(0xE9E9E9FF);
+            copyAll->setBorder(1.f, 0xDDDDDDFF); copyAll->setBorderRadius(4.f);
             copyAll->onClick.add([this](Ling::Button*) {
                 const auto& text = showingTranslationText && translationReady ? translatedText : originalText;
                 if (copyTextReliable(hwnd, text)) status->setText(L"已复制当前文字");
@@ -296,109 +247,72 @@ namespace WeShotOcrV2
             });
 
             auto modeRow = right->makeChild<Ling::Node>();
-            modeRow->setHeight(36.f);
-            modeRow->setWidthPercent(100.f);
-            modeRow->setFlexDirection(Ling::FlexDirection::Row);
-            modeRow->setAlignItems(Ling::Align::Center);
-
+            modeRow->setHeight(36.f); modeRow->setWidthPercent(100.f);
+            modeRow->setFlexDirection(Ling::FlexDirection::Row); modeRow->setAlignItems(Ling::Align::Center);
             originalTab = modeRow->makeChild<Ling::Button>();
-            originalTab->setText(L"原文");
-            originalTab->setSize(58.f, 28.f);
-            originalTab->setFontSize(12.f);
-            originalTab->setBorderRadius(4.f);
-            originalTab->setMarginRight(6.f);
-            originalTab->onClick.add([this](Ling::Button*) {
-                showingTranslationText = false;
-                updateTextTabs();
-                if (textBox) textBox->setText(originalText);
-            });
+            originalTab->setText(L"原文"); originalTab->setSize(58.f, 28.f); originalTab->setFontSize(12.f);
+            originalTab->setBorderRadius(4.f); originalTab->setMarginRight(6.f);
+            originalTab->onClick.add([this](Ling::Button*) { if (translationReady) showMode(false); });
             originalTab->hide();
-
             translatedTab = modeRow->makeChild<Ling::Button>();
-            translatedTab->setText(L"译文");
-            translatedTab->setSize(58.f, 28.f);
-            translatedTab->setFontSize(12.f);
+            translatedTab->setText(L"译文"); translatedTab->setSize(58.f, 28.f); translatedTab->setFontSize(12.f);
             translatedTab->setBorderRadius(4.f);
-            translatedTab->onClick.add([this](Ling::Button*) {
-                if (!translationReady) return;
-                showingTranslationText = true;
-                updateTextTabs();
-                if (textBox) textBox->setText(translatedText);
-            });
+            translatedTab->onClick.add([this](Ling::Button*) { if (translationReady) showMode(true); });
             translatedTab->hide();
-
-            auto spacer = modeRow->makeChild<Ling::Node>();
-            spacer->setFlexGrow(1.f);
-
+            auto spacer = modeRow->makeChild<Ling::Node>(); spacer->setFlexGrow(1.f);
             translateBtn = modeRow->makeChild<Ling::Button>();
-            translateBtn->setText(L"翻译");
-            translateBtn->setSize(78.f, 28.f);
-            translateBtn->setFontSize(12.f);
-            translateBtn->setColor(0xFFFFFFFF);
-            translateBtn->setBg(0x1677FFFF);
-            translateBtn->setHoverBg(0x4096FFFF);
-            translateBtn->setBorderRadius(4.f);
+            translateBtn->setText(L"翻译"); translateBtn->setSize(78.f, 28.f); translateBtn->setFontSize(12.f);
+            translateBtn->setColor(0xFFFFFFFF); translateBtn->setBg(0x1677FFFF);
+            translateBtn->setHoverBg(0x4096FFFF); translateBtn->setBorderRadius(4.f);
             translateBtn->onClick.add([this](Ling::Button*) { startGeminiTranslation(); });
 
             status = right->makeChild<Ling::Label>();
-            status->setHeight(30.f);
-            status->setWidthPercent(100.f);
-            status->setText(L"正在识别... 左侧图片可右键复制、另存为或标注");
-            status->setFontSize(12.f);
-            status->setColor(0x777777FF);
-
+            status->setHeight(30.f); status->setWidthPercent(100.f);
+            status->setText(L"正在识别..."); status->setFontSize(12.f); status->setColor(0x777777FF);
             textBox = right->makeChild<Ling::TextBox>();
-            textBox->setFlexGrow(1.f);
-            textBox->setWidthPercent(100.f);
-            textBox->setFontSize(14.f);
-            textBox->setPadding(10.f);
-            textBox->setBg(0xFAFAFAFF);
-            textBox->setBorder(1.f, 0xE1E1E1FF);
-            textBox->setBorderRadius(4.f);
-            textBox->setSelectionBgColor(0xB8DDF799);
-            textBox->setPlaceholder(L"正在识别...");
+            textBox->setFlexGrow(1.f); textBox->setWidthPercent(100.f); textBox->setFontSize(14.f);
+            textBox->setPadding(10.f); textBox->setBg(0xFAFAFAFF);
+            textBox->setBorder(1.f, 0xE1E1E1FF); textBox->setBorderRadius(4.f);
+            textBox->setSelectionBgColor(0xB8DDF799); textBox->setPlaceholder(L"正在识别...");
 
             if (imageW > 0 && imageH > 0 && !pixels.empty()) {
                 D2D1_BITMAP_PROPERTIES1 props{};
                 props.pixelFormat = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
-                props.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;
-                props.dpiX = 96.f;
-                props.dpiY = 96.f;
-                Ling::D2D::get()->deviceContext->CreateBitmap(
-                    D2D1::SizeU((UINT32)imageW, (UINT32)imageH), pixels.data(), (UINT32)imageW * 4,
-                    &props, imageBitmap.GetAddressOf());
+                props.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE; props.dpiX = 96.f; props.dpiY = 96.f;
+                Ling::D2D::get()->deviceContext->CreateBitmap(D2D1::SizeU((UINT32)imageW, (UINT32)imageH),
+                    pixels.data(), (UINT32)imageW * 4, &props, imageBitmap.GetAddressOf());
             }
-
-            show();
-            SetForegroundWindow(hwnd);
+            show(); SetForegroundWindow(hwnd);
         }
 
-        void layout() override
-        {
-            Ling::WinBase::layout();
-            paintImage();
-        }
-
-        LRESULT onHitTest(const POINT pos) override
-        {
-            return DefWindowProcW(hwnd, WM_NCHITTEST, 0, MAKELPARAM(pos.x, pos.y));
-        }
+        void layout() override { Ling::WinBase::layout(); paintImage(); }
+        LRESULT onHitTest(const POINT pos) override { return DefWindowProcW(hwnd, WM_NCHITTEST, 0, MAKELPARAM(pos.x, pos.y)); }
 
     private:
+        void showMode(bool translated)
+        {
+            if (!translationReady) translated = false;
+            showTranslatedImage = translated;
+            showingTranslationText = translated;
+            if (textBox) textBox->setText(translated ? translatedText : originalText);
+            if (translateBtn) translateBtn->setText(translated ? L"原文" : L"译文");
+            updateTextTabs();
+            if (status) status->setText(translated
+                ? L"当前显示译文；再次点击“原文”可立即切回对比"
+                : L"当前显示原文；再次点击“译文”可立即切回翻译结果");
+            refresh();
+        }
+
         void updateTextTabs()
         {
             if (!originalTab || !translatedTab) return;
             if (showingTranslationText) {
-                originalTab->setBg(0xF3F3F3FF);
-                originalTab->setColor(0x444444FF);
-                translatedTab->setBg(0xE8F3FFFF);
-                translatedTab->setColor(0x1677FFFF);
+                originalTab->setBg(0xF3F3F3FF); originalTab->setColor(0x444444FF);
+                translatedTab->setBg(0xE8F3FFFF); translatedTab->setColor(0x1677FFFF);
             }
             else {
-                originalTab->setBg(0xE8F3FFFF);
-                originalTab->setColor(0x1677FFFF);
-                translatedTab->setBg(0xF3F3F3FF);
-                translatedTab->setColor(0x444444FF);
+                originalTab->setBg(0xE8F3FFFF); originalTab->setColor(0x1677FFFF);
+                translatedTab->setBg(0xF3F3F3FF); translatedTab->setColor(0x444444FF);
             }
         }
 
@@ -409,17 +323,11 @@ namespace WeShotOcrV2
             int x2 = std::clamp(block.xmax * imageW / 1000, x1 + 1, imageW);
             int y1 = std::clamp(block.ymin * imageH / 1000, 0, imageH - 1);
             int y2 = std::clamp(block.ymax * imageH / 1000, y1 + 1, imageH);
-            int sx = std::max(1, (x2 - x1) / 16);
-            int sy = std::max(1, (y2 - y1) / 10);
+            int sx = std::max(1, (x2 - x1) / 16), sy = std::max(1, (y2 - y1) / 10);
             unsigned long long r = 0, g = 0, b = 0, count = 0;
-            for (int y = y1; y < y2; y += sy) {
-                for (int x = x1; x < x2; x += sx) {
-                    size_t idx = ((size_t)y * imageW + x) * 4;
-                    b += pixels[idx];
-                    g += pixels[idx + 1];
-                    r += pixels[idx + 2];
-                    ++count;
-                }
+            for (int yy = y1; yy < y2; yy += sy) for (int xx = x1; xx < x2; xx += sx) {
+                size_t idx = ((size_t)yy * imageW + xx) * 4;
+                b += pixels[idx]; g += pixels[idx + 1]; r += pixels[idx + 2]; ++count;
             }
             if (!count) return D2D1::ColorF(D2D1::ColorF::White);
             return D2D1::ColorF((float)r / count / 255.f, (float)g / count / 255.f,
@@ -429,8 +337,7 @@ namespace WeShotOcrV2
         void paintTranslationBlocks(ID2D1DeviceContext* ctx, const D2D1_RECT_F& imageRect)
         {
             if (!ctx || !showTranslatedImage || translationBlocks.empty()) return;
-            const float dw = imageRect.right - imageRect.left;
-            const float dh = imageRect.bottom - imageRect.top;
+            const float dw = imageRect.right - imageRect.left, dh = imageRect.bottom - imageRect.top;
             for (auto& block : translationBlocks) {
                 D2D1_RECT_F rect{
                     imageRect.left + dw * block.xmin / 1000.f,
@@ -439,63 +346,48 @@ namespace WeShotOcrV2
                     imageRect.top + dh * block.ymax / 1000.f
                 };
                 if (rect.right - rect.left < 2.f || rect.bottom - rect.top < 2.f) continue;
-
                 auto bgColor = sampleBackground(block);
-                const float luminance = bgColor.r * 0.299f + bgColor.g * 0.587f + bgColor.b * 0.114f;
-                auto textColor = luminance > 0.55f ? D2D1::ColorF(D2D1::ColorF::Black) : D2D1::ColorF(D2D1::ColorF::White);
-                Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bgBrush;
-                Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> textBrush;
+                const float lum = bgColor.r * .299f + bgColor.g * .587f + bgColor.b * .114f;
+                auto textColor = lum > .55f ? D2D1::ColorF(D2D1::ColorF::Black) : D2D1::ColorF(D2D1::ColorF::White);
+                Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bgBrush, textBrush;
                 ctx->CreateSolidColorBrush(bgColor, bgBrush.GetAddressOf());
                 ctx->CreateSolidColorBrush(textColor, textBrush.GetAddressOf());
                 if (!bgBrush || !textBrush) continue;
                 ctx->FillRectangle(rect, bgBrush.Get());
-
-                const float boxH = rect.bottom - rect.top;
-                float fontSize = std::clamp(boxH * 0.62f, 7.f * dpi, 24.f * dpi);
-                auto layout = Ling::D2D::makeTextLayout(block.translation, fontSize,
+                float boxH = rect.bottom - rect.top;
+                float fontSize = std::clamp(boxH * .62f, 7.f * dpi, 24.f * dpi);
+                auto tl = Ling::D2D::makeTextLayout(block.translation, fontSize,
                     std::max(1.f, rect.right - rect.left), std::max(1.f, boxH));
-                if (!layout) continue;
-                layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                ctx->DrawTextLayout({ rect.left, rect.top }, layout.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                if (!tl) continue;
+                tl->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                tl->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                ctx->DrawTextLayout({ rect.left, rect.top }, tl.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
             }
         }
 
         void paintImage()
         {
             if (!imageCanvas) return;
-            auto ctx = imageCanvas->startPaint();
-            if (!ctx) return;
+            auto ctx = imageCanvas->startPaint(); if (!ctx) return;
             ctx->Clear(D2D1::ColorF(0xF2F2F2));
-
             if (imageBitmap && imageW > 0 && imageH > 0) {
-                const float cw = imageCanvas->w;
-                const float ch = imageCanvas->h;
-                const float margin = 18.f * dpi;
-                const float availW = (std::max)(1.f, cw - margin * 2.f);
-                const float availH = (std::max)(1.f, ch - margin * 2.f);
-                float scale = (std::min)(availW / imageW, availH / imageH);
-                scale = (std::min)(1.f, (std::max)(0.01f, scale));
-                const float dw = imageW * scale;
-                const float dh = imageH * scale;
-                const float left = (cw - dw) * 0.5f;
-                const float top = (ch - dh) * 0.5f;
+                float cw = imageCanvas->w, ch = imageCanvas->h, margin = 18.f * dpi;
+                float availW = std::max(1.f, cw - margin * 2.f), availH = std::max(1.f, ch - margin * 2.f);
+                float scale = std::min(availW / imageW, availH / imageH);
+                scale = std::min(1.f, std::max(.01f, scale));
+                float dw = imageW * scale, dh = imageH * scale;
+                float left = (cw - dw) * .5f, top = (ch - dh) * .5f;
                 auto dest = D2D1::RectF(left, top, left + dw, top + dh);
                 ctx->DrawBitmap(imageBitmap.Get(), dest, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
                 paintTranslationBlocks(ctx, dest);
             }
-
             imageCanvas->finishPaint();
         }
 
         bool makeTranslatedPixels(std::vector<BYTE>& out)
         {
-            if (!translationReady || translationBlocks.empty() || !imageBitmap) {
-                out = pixels;
-                return !out.empty();
-            }
-            auto d2d = Ling::D2D::get();
-            auto ctx = d2d->deviceContext.Get();
+            if (!translationReady || translationBlocks.empty() || !imageBitmap) { out = pixels; return !out.empty(); }
+            auto ctx = Ling::D2D::get()->deviceContext.Get();
             D2D1_BITMAP_PROPERTIES1 targetProps{
                 .pixelFormat{ D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED) },
                 .dpiX{ 96.f }, .dpiY{ 96.f }, .bitmapOptions{ D2D1_BITMAP_OPTIONS_TARGET }
@@ -503,17 +395,12 @@ namespace WeShotOcrV2
             Microsoft::WRL::ComPtr<ID2D1Bitmap1> target;
             auto size = D2D1::SizeU((UINT32)imageW, (UINT32)imageH);
             if (FAILED(ctx->CreateBitmap(size, nullptr, 0, &targetProps, target.GetAddressOf()))) return false;
-            ctx->SetTarget(target.Get());
-            ctx->SetTransform(D2D1::Matrix3x2F::Identity());
-            ctx->BeginDraw();
+            ctx->SetTarget(target.Get()); ctx->SetTransform(D2D1::Matrix3x2F::Identity()); ctx->BeginDraw();
             ctx->Clear(D2D1::ColorF(0, 0.f));
             D2D1_RECT_F full = D2D1::RectF(0.f, 0.f, (float)imageW, (float)imageH);
             ctx->DrawBitmap(imageBitmap.Get(), full, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-            paintTranslationBlocks(ctx, full);
-            auto hr = ctx->EndDraw();
-            ctx->SetTarget(nullptr);
-            if (FAILED(hr)) return false;
-
+            bool prev = showTranslatedImage; showTranslatedImage = true; paintTranslationBlocks(ctx, full); showTranslatedImage = prev;
+            auto hr = ctx->EndDraw(); ctx->SetTarget(nullptr); if (FAILED(hr)) return false;
             D2D1_BITMAP_PROPERTIES1 cpuProps{
                 .pixelFormat{ target->GetPixelFormat() }, .dpiX{ 96.f }, .dpiY{ 96.f },
                 .bitmapOptions{ D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW }
@@ -521,41 +408,37 @@ namespace WeShotOcrV2
             Microsoft::WRL::ComPtr<ID2D1Bitmap1> cpu;
             if (FAILED(ctx->CreateBitmap(size, nullptr, 0, &cpuProps, cpu.GetAddressOf()))) return false;
             if (FAILED(cpu->CopyFromBitmap(nullptr, target.Get(), nullptr))) return false;
-            D2D1_MAPPED_RECT mapped{};
-            if (FAILED(cpu->Map(D2D1_MAP_OPTIONS_READ, &mapped))) return false;
-            const size_t rowBytes = (size_t)imageW * 4;
-            out.resize(rowBytes * imageH);
-            for (int row = 0; row < imageH; ++row) {
-                memcpy(out.data() + (size_t)row * rowBytes,
-                    mapped.bits + (size_t)row * mapped.pitch, rowBytes);
-            }
-            cpu->Unmap();
-            return true;
+            D2D1_MAPPED_RECT mapped{}; if (FAILED(cpu->Map(D2D1_MAP_OPTIONS_READ, &mapped))) return false;
+            const size_t rowBytes = (size_t)imageW * 4; out.resize(rowBytes * imageH);
+            for (int row = 0; row < imageH; ++row)
+                memcpy(out.data() + (size_t)row * rowBytes, mapped.bits + (size_t)row * mapped.pitch, rowBytes);
+            cpu->Unmap(); return true;
         }
 
         void startGeminiTranslation()
         {
             if (translating) return;
+            if (translationReady) { showMode(!showTranslatedImage); return; }
             auto setting = Setting::get();
             auto apiKey = setting ? setting->getGeminiApiKey() : L"";
             auto model = setting ? setting->getGeminiModel() : L"gemini-3.7-flash";
-            if (apiKey.empty()) {
-                if (status) status->setText(L"请先打开“设置 > 通用设置”，填写并保存 Gemini API Key");
-                return;
-            }
-            if (pixels.empty() || imageW <= 0 || imageH <= 0) return;
-
+            if (apiKey.empty()) { if (status) status->setText(L"请先在“设置 > 通用设置”填写 Gemini API Key"); return; }
             translating = true;
             if (translateBtn) translateBtn->setText(L"翻译中...");
-            if (status) status->setText(L"正在发送图片给 Gemini 识别并翻译...");
+            if (status) status->setText(geminiOcrBlocks.empty()
+                ? L"正在让 Gemini 识别图片并翻译..."
+                : L"正在翻译已识别文字（无需再次上传图片）...");
             const auto myRequest = requestId.load();
+            auto blocks = geminiOcrBlocks;
             auto imagePixels = pixels;
-            std::thread([imagePixels = std::move(imagePixels), width = imageW, height = imageH,
-                apiKey = std::move(apiKey), model = std::move(model), myRequest]() mutable {
-                auto result = GeminiClient::translateImage(imagePixels, width, height, apiKey, model);
-                Ling::App::get()->dq.TryEnqueue([result = std::move(result), myRequest]() mutable {
+            std::thread([blocks = std::move(blocks), imagePixels = std::move(imagePixels),
+                width = imageW, height = imageH, apiKey = std::move(apiKey), model = std::move(model), myRequest]() mutable {
+                GeminiClient::TranslationResult r;
+                if (!blocks.empty()) r = GeminiClient::translateOcrBlocks(blocks, apiKey, model);
+                else r = GeminiClient::translateImage(imagePixels, width, height, apiKey, model);
+                Ling::App::get()->dq.TryEnqueue([r = std::move(r), myRequest]() mutable {
                     if (requestId.load() != myRequest || !activeWindow) return;
-                    activeWindow->setTranslationResult(std::move(result));
+                    activeWindow->setTranslationResult(std::move(r));
                 });
             }).detach();
         }
@@ -563,15 +446,12 @@ namespace WeShotOcrV2
         void openAnnotationEditor()
         {
             if (pixels.empty() || imageW <= 0 || imageH <= 0) return;
-
             MONITORINFO mi{ sizeof(MONITORINFO) };
             HMONITOR mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
             if (!mon || !GetMonitorInfo(mon, &mi)) return;
-            const int workW = mi.rcWork.right - mi.rcWork.left;
-            const int workH = mi.rcWork.bottom - mi.rcWork.top;
-            const int posX = mi.rcWork.left + (workW - (std::min)(imageW, workW)) / 2;
-            const int posY = mi.rcWork.top + (workH - (std::min)(imageH, workH)) / 2;
-
+            int workW = mi.rcWork.right - mi.rcWork.left, workH = mi.rcWork.bottom - mi.rcWork.top;
+            int posX = mi.rcWork.left + (workW - std::min(imageW, workW)) / 2;
+            int posY = mi.rcWork.top + (workH - std::min(imageH, workH)) / 2;
             std::vector<BYTE> editorPixels;
             if (showTranslatedImage && translationReady) makeTranslatedPixels(editorPixels);
             if (editorPixels.empty()) editorPixels = pixels;
@@ -581,32 +461,20 @@ namespace WeShotOcrV2
 
         void showImageContextMenu()
         {
-            HMENU menu = CreatePopupMenu();
-            if (!menu) return;
+            HMENU menu = CreatePopupMenu(); if (!menu) return;
             AppendMenuW(menu, MF_STRING, 3, L"标注 / 马赛克...");
             AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(menu, MF_STRING, 1, L"复制图片");
             AppendMenuW(menu, MF_STRING, 2, L"另存为 PNG...");
-
-            POINT pt{};
-            GetCursorPos(&pt);
-            SetForegroundWindow(hwnd);
-            const UINT cmd = TrackPopupMenu(menu,
-                TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
+            POINT pt{}; GetCursorPos(&pt); SetForegroundWindow(hwnd);
+            UINT cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
                 pt.x, pt.y, 0, hwnd, nullptr);
-            DestroyMenu(menu);
-            PostMessageW(hwnd, WM_NULL, 0, 0);
-
+            DestroyMenu(menu); PostMessageW(hwnd, WM_NULL, 0, 0);
             std::vector<BYTE> currentPixels;
             if (showTranslatedImage && translationReady) makeTranslatedPixels(currentPixels);
             if (currentPixels.empty()) currentPixels = pixels;
-
-            if (cmd == 3) {
-                openAnnotationEditor();
-            }
-            else if (cmd == 1) {
-                if (!currentPixels.empty()) Util::saveToClipboard(imageW, imageH, currentPixels.data());
-            }
+            if (cmd == 3) openAnnotationEditor();
+            else if (cmd == 1 && !currentPixels.empty()) Util::saveToClipboard(imageW, imageH, currentPixels.data());
             else if (cmd == 2) {
                 auto path = Util::getSaveFilePath(hwnd, L"png");
                 if (!path.empty() && !currentPixels.empty()) Util::saveToFile(path, imageW, imageH, currentPixels.data());
@@ -623,55 +491,55 @@ namespace WeShotOcrV2
         Ling::Button* originalTab{ nullptr };
         Ling::Button* translatedTab{ nullptr };
         Ling::Button* translateBtn{ nullptr };
-        std::wstring originalText;
-        std::wstring translatedText;
+        std::wstring originalText, translatedText;
+        std::vector<GeminiClient::OcrBlock> geminiOcrBlocks;
         std::vector<GeminiClient::TranslationBlock> translationBlocks;
-        bool translating{ false };
-        bool translationReady{ false };
-        bool showingTranslationText{ false };
-        bool showTranslatedImage{ false };
+        bool translating{ false }, translationReady{ false };
+        bool showingTranslationText{ false }, showTranslatedImage{ false };
     };
 
-    inline bool containsPoint(POINT)
-    {
-        return false;
-    }
-
-    inline bool hasWindow()
-    {
-        return activeWindow != nullptr;
-    }
+    inline bool containsPoint(POINT) { return false; }
+    inline bool hasWindow() { return activeWindow != nullptr; }
 
     inline void showPixels(std::vector<BYTE> pixels, int width, int height)
     {
         if (pixels.empty() || width <= 0 || height <= 0) return;
-        const auto expected = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
-        if (pixels.size() < expected) return;
-
+        if (pixels.size() < (size_t)width * (size_t)height * 4) return;
         const auto myRequest = ++requestId;
         if (activeWindow) activeWindow->close();
         activeWindow = new OcrResultWindow(pixels, width, height);
         activeWindow->open();
 
-        std::thread([pixels = std::move(pixels), width, height, myRequest]() mutable {
-            auto result = recognizeWindows(std::move(pixels), width, height);
-            Ling::App::get()->dq.TryEnqueue([result = std::move(result), myRequest]() mutable {
-                if (requestId.load() != myRequest || !activeWindow) return;
-                activeWindow->setOcrResult(std::move(result));
-            });
-        }).detach();
+        auto setting = Setting::get();
+        auto apiKey = setting ? setting->getGeminiApiKey() : L"";
+        auto model = setting ? setting->getGeminiModel() : L"gemini-3.7-flash";
+        if (!apiKey.empty()) {
+            std::thread([pixels = std::move(pixels), width, height, apiKey = std::move(apiKey),
+                model = std::move(model), myRequest]() mutable {
+                auto result = GeminiClient::recognizeImage(pixels, width, height, apiKey, model);
+                Ling::App::get()->dq.TryEnqueue([result = std::move(result), myRequest]() mutable {
+                    if (requestId.load() != myRequest || !activeWindow) return;
+                    activeWindow->setGeminiOcrResult(std::move(result));
+                });
+            }).detach();
+        }
+        else {
+            std::thread([pixels = std::move(pixels), width, height, myRequest]() mutable {
+                auto result = recognizeWindows(std::move(pixels), width, height);
+                Ling::App::get()->dq.TryEnqueue([result = std::move(result), myRequest]() mutable {
+                    if (requestId.load() != myRequest || !activeWindow) return;
+                    activeWindow->setLocalOcrResult(std::move(result));
+                });
+            }).detach();
+        }
     }
 
     inline void show(WinCap* win)
     {
         if (!win || !win->cutMask || !win->cutMask->hasRect()) return;
-
-        std::vector<BYTE> pixels;
-        int width{ 0 }, height{ 0 };
+        std::vector<BYTE> pixels; int width{ 0 }, height{ 0 };
         if (!copyCutPixels(win, pixels, width, height)) return;
-
         showPixels(std::move(pixels), width, height);
-        // Result window is independent; finish screenshot mode immediately.
         win->close();
     }
 }
