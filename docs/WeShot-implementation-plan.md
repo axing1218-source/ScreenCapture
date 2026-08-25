@@ -32,6 +32,14 @@ Turn the xland/ScreenCapture fork into a portable WeChat-like Windows screenshot
 6. Cache the result against the current capture revision.
 7. Render translated text locally in WeShot; after the first response, original/translation switching is local and immediate.
 
+### Request reuse policy
+Latency is more important than forcing every UI path through identical network calls. Use the cheapest request that already has enough information:
+- **Toolbar Translate on a fresh selection:** one image request that performs OCR + translation + boxes in the same round trip. Do not run a separate OCR request first.
+- **OCR panel opened first:** one image OCR request. If the user then presses Translate and the OCR blocks are still valid for the same revision, send only those OCR text blocks for translation; do not upload the screenshot again.
+- **Translation already cached:** opening the OCR panel, switching tabs, copying text, or toggling Original/Translation must reuse the same cached blocks and issue zero Gemini requests.
+- **Concurrent actions:** if toolbar Translate and OCR panel Translate are requested while an equivalent request for the same revision is already in flight, attach both UI consumers to that request instead of starting a duplicate call.
+- Cache keys include capture revision, model, and target language. Changing any of those invalidates only the affected derived result, not the canonical original pixels.
+
 ## Network and latency rules
 - Keep `gemini-3.7-flash` as the default model unless testing shows a concrete regression.
 - Use the model's low-latency supported thinking configuration rather than unsupported `minimal` settings.
@@ -100,6 +108,17 @@ Invalidate the active OCR/translation cache when:
 
 Each asynchronous Gemini request records the revision it started from. A completed response may update the UI only if its revision still matches the active capture. Stale responses are discarded silently instead of being painted onto a newer selection.
 
+### Shared per-revision cache
+Keep one capture-scoped cache instead of separate toolbar and OCR-window copies:
+- source BGRA pixels / dimensions;
+- revision id;
+- OCR text + OCR boxes;
+- translation text + translation boxes keyed by target language/model;
+- locally rendered translated overlay/bitmap;
+- request state and timing diagnostics.
+
+The toolbar and OCR result window are views over this cache. Neither owns the canonical data. Closing the OCR panel therefore must not destroy a translation already available to the toolbar, and reopening it must not trigger another request.
+
 ## OCR side panel behavior
 - Right-side text is independently selectable and copyable.
 - Original/translation tabs switch both the textual result and the image preview consistently.
@@ -109,6 +128,7 @@ Each asynchronous Gemini request records the revision it started from. A complet
 - Closing the side panel must return keyboard focus to the capture surface without cancelling or moving the active selection.
 - While selecting text, mouse move/up events remain owned by the panel until the selection gesture ends, even if the pointer crosses the panel edge.
 - Ctrl+C targets panel text only when the panel/text control owns focus; otherwise existing screenshot copy behavior is preserved.
+- Opening/closing the side panel cannot alter the capture revision because it does not change source pixels.
 
 ## Long screenshot rules
 - Preserve original stitched pixels and save losslessly as PNG.
@@ -143,7 +163,9 @@ The UI normally shows only `totalMs`. Detailed stage timings may be shown in a d
 4. **Selection safety:** moving/resizing the selection during an in-flight request prevents the old result from being painted.
 5. **Panel isolation:** selecting/copying OCR text never moves or resizes the screenshot selection.
 6. **Failure fallback:** Gemini failure leaves the original screenshot and any local OCR result intact.
-7. **Windows 10 smoke test:** verify the above on Windows 10 22H2 before introducing more rendering complexity.
+7. **Request reuse:** `OCR → Translate` reuses valid OCR blocks with a text-only translation request; reopening the panel or toggling views makes no request.
+8. **Duplicate suppression:** simultaneous toolbar/panel translation for one revision creates one in-flight network operation, not two.
+9. **Windows 10 smoke test:** verify the above on Windows 10 22H2 before introducing more rendering complexity.
 
 ### Minimal test matrix
 Use the same small set of screenshots for each build so regressions are comparable:
@@ -155,11 +177,11 @@ Use the same small set of screenshots for each build so regressions are comparab
 - 125% or 150% Windows display scaling;
 - a long screenshot with repeated chat bubbles crossing tile boundaries.
 
-For each sample record: OCR correctness, first-response total time, wait-response time, whether local toggle is instant, and whether the translated overlay visibly damages the background.
+For each sample record: OCR correctness, first-response total time, wait-response time, whether local toggle is instant, whether a duplicate request occurred, and whether the translated overlay visibly damages the background.
 
 ## Implementation order from v0.8.3
-1. **Stabilize connectivity diagnostics.** Validate metadata connection test and real inference timing on Windows 10 22H2.
-2. **Move Gemini production parameters into `GeminiClient.h`.** Remove CI-only behavior patches so local builds and CI builds execute the same code.
+1. **Move Gemini production parameters into `GeminiClient.h`.** Remove CI-only behavior patches so local builds and CI builds execute the same code.
+2. **Unify capture-scoped OCR/translation cache.** Toolbar and side panel share one revision/model/language keyed result and one in-flight request.
 3. **Finish revision-based invalidation.** Apply the same rule to toolbar translation, OCR result window, long capture, and selection edits before adding more visual complexity.
 4. **Add lightweight timing telemetry in UI.** PNG encoding, request construction, send/wait, parse, and render timings; do not transmit telemetry externally.
 5. **Refine local translation rendering to R2.** Border/background sampling, better foreground color, adaptive font fitting, and left/center alignment selection.
@@ -167,8 +189,16 @@ For each sample record: OCR correctness, first-response total time, wait-respons
 7. **Snipaste-style annotation refinement.** Tool toggling, secondary controls, width/color/fill/opacity, mosaic/text behavior, undo/redo consistency.
 8. **Windows 10/11 smoke-test pass and packaging.** Single portable executable, no localhost dependency.
 
-## Current coding checkpoint
-Before changing visual rendering further, land the production Gemini behavior directly in source: supported low-latency thinking configuration, medium vision resolution, metadata-based connection test, longer inference receive timeout, and send-vs-wait diagnostics. Then remove equivalent workflow-time source rewriting. CI should only build/test source, not define production behavior.
+## Source migration checkpoint
+Before changing visual rendering further, land the current CI-injected Gemini behavior directly in source:
+- `gemini-3.7-flash` uses supported low thinking, never `minimal`;
+- normal screenshot image requests use medium vision resolution;
+- inference receive ceiling is long enough to avoid misclassifying a slow model response as network failure;
+- send and wait-response stages report separately;
+- Settings test uses `GET /v1beta/models/{model}` with the same WinHTTP routing policy as inference;
+- after source is updated, delete the workflow-time `Patch Gemini diagnostics` production rewrite and replace it with assertions that fail CI if source regresses.
+
+CI must build production behavior from source; it must not define production behavior.
 
 ## Current test baseline
 The latest v0.8.3 diagnostic build is the current test baseline. First test Settings → **Test connection**. A successful result should identify the selected model and elapsed milliseconds. Then test **Screenshot → Translate** and record first-response time. After the first translation completes, repeatedly switch Original/Translation; those switches should be immediate and should not send another Gemini request.
