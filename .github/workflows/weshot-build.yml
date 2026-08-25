@@ -58,6 +58,24 @@ jobs:
           $proj = $proj.Replace(';D:\sdk\gifski\target\release\gifski.lib', '')
           Set-Content Src\ScreenCapture.vcxproj $proj -Encoding utf8
 
+      - name: Patch Gemini 3.7 Flash latency compatibility
+        shell: pwsh
+        run: |
+          $gemini = Get-Content Src\GeminiClient.h -Raw
+
+          # Gemini 3.7 Flash supports low/medium/high thinking levels; minimal is rejected.
+          # Use low for screenshot OCR/translation because this path is latency-sensitive.
+          $gemini = $gemini.Replace('model.find(L"flash") != std::wstring::npos ? L"minimal" : L"low"', 'L"low"')
+
+          # Explicit medium image resolution avoids the variable/default image token budget while
+          # retaining enough detail for normal desktop UI text. Small-text OCR can be promoted to
+          # high later as a separate accuracy mode if testing shows it is necessary.
+          $needle = 'generation.SetNamedValue(L"maxOutputTokens", JsonValue::CreateNumberValue(maxOutputTokens));'
+          $replacement = $needle + "`r`n        generation.SetNamedValue(L\"mediaResolution\", JsonValue::CreateStringValue(L\"MEDIA_RESOLUTION_MEDIUM\"));"
+          $gemini = $gemini.Replace($needle, $replacement)
+
+          Set-Content Src\GeminiClient.h $gemini -Encoding utf8
+
       - name: Build ScreenCapture
         shell: pwsh
         run: |
