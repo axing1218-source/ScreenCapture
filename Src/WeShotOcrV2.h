@@ -7,54 +7,33 @@
 #include <winrt/Windows.Storage.Streams.h>
 #include <thread>
 #include <atomic>
+#include <vector>
+#include <algorithm>
 #include "Win/WinCap.h"
 #include "Win/CutMask.h"
-#include "WeShotPaddleOcr.h"
+#include "Util.h"
 
+// WeShot OCR result flow.
+//
+// OCR is intentionally kept lightweight here. The capture overlay is closed as soon as the
+// user chooses OCR, then a normal standalone result window opens. The left side keeps the
+// captured image; the right side is a real Ling::TextBox so mouse drag selection and Ctrl+C
+// do not compete with WinCap's selection/resize mouse handling.
 namespace WeShotOcrV2
 {
-    struct WordBlock
-    {
-        std::wstring text;
-        float x{ 0 }, y{ 0 }, w{ 0 }, h{ 0 };
-    };
-
     struct Result
     {
         std::wstring text;
-        std::vector<WordBlock> words;
         std::wstring error;
-        std::wstring engine;
     };
 
-    struct State
-    {
-        WinCap* win{ nullptr };
-        Ling::Node* panel{ nullptr };
-        Ling::Node* header{ nullptr };
-        Ling::Label* title{ nullptr };
-        Ling::Label* status{ nullptr };
-        Ling::TextBox* textBox{ nullptr };
-        Ling::Button* copyBtn{ nullptr };
-        Ling::Button* closeBtn{ nullptr };
-        std::wstring text;
-        std::vector<WordBlock> words;
-        std::atomic<unsigned long long> requestId{ 0 };
-        bool busy{ false };
-        bool internalTextUpdate{ false };
-    };
+    class OcrResultWindow;
+    inline OcrResultWindow* activeWindow{ nullptr };
+    inline std::atomic<unsigned long long> requestId{ 0 };
 
-    inline State state;
-
-    inline bool containsPoint(POINT pos)
-    {
-        return state.panel && state.win && state.panel->isPosIn(pos);
-    }
-
-    inline bool copyTextReliable(const std::wstring& text)
+    inline bool copyTextReliable(HWND owner, const std::wstring& text)
     {
         if (text.empty()) return false;
-        HWND owner = state.win ? state.win->hwnd : nullptr;
         bool opened = false;
         for (int i = 0; i < 8; ++i) {
             if (OpenClipboard(owner)) { opened = true; break; }
@@ -82,67 +61,6 @@ namespace WeShotOcrV2
         }
         CloseClipboard();
         return ok;
-    }
-
-    inline void setTextViewText(const std::wstring& text)
-    {
-        state.text = text;
-        if (!state.textBox) return;
-        state.internalTextUpdate = true;
-        state.textBox->setText(text);
-        state.internalTextUpdate = false;
-    }
-
-    inline void layoutPanel()
-    {
-        if (!state.win || !state.panel || !state.win->cutMask || !state.win->cutMask->hasRect()) return;
-
-        const auto& r = state.win->cutMask->maskRect;
-        const float dpi = (std::max)(0.5f, state.win->dpi);
-        const float deskW = state.win->w / dpi;
-        const float left = r.left / dpi;
-        const float top = r.top / dpi;
-        const float right = r.right / dpi;
-        const float bottom = r.bottom / dpi;
-
-        constexpr float panelW = 330.f;
-        const float panelH = (std::max)(1.f, bottom - top);
-
-        float px = right;
-        if (px + panelW > deskW) px = left - panelW;
-        if (px < 0.f) px = (std::max)(0.f, right - panelW);
-
-        state.panel->setSize(panelW, panelH);
-        state.panel->setPosition(Ling::Edge::Left, px);
-        state.panel->setPosition(Ling::Edge::Top, top);
-
-        // Same height as the selection at all times. When the selection is short, remove
-        // non-essential chrome instead of allowing any child to paint outside the panel.
-        const bool veryCompact = panelH < 58.f;
-        const bool compact = panelH < 118.f;
-
-        if (state.header) {
-            if (veryCompact) state.header->hide();
-            else state.header->show();
-        }
-        if (state.status) {
-            if (compact) state.status->hide();
-            else state.status->show();
-        }
-
-        if (state.textBox) {
-            const float pad = veryCompact ? 2.f : 8.f;
-            const float headerH = veryCompact ? 0.f : 30.f;
-            const float statusH = compact ? 0.f : 22.f;
-            const float gap = veryCompact ? 0.f : (compact ? 3.f : 5.f);
-            const float textTop = pad + headerH + statusH + gap;
-            const float textH = (std::max)(1.f, panelH - textTop - pad);
-            state.textBox->setPositionType(Ling::Position::Absolute);
-            state.textBox->setPosition(Ling::Edge::Left, pad);
-            state.textBox->setPosition(Ling::Edge::Top, textTop);
-            state.textBox->setSize((std::max)(1.f, panelW - pad * 2.f), textH);
-            state.textBox->show();
-        }
     }
 
     inline bool copyCutPixels(WinCap* win, std::vector<BYTE>& pixels, int& outW, int& outH)
@@ -183,32 +101,14 @@ namespace WeShotOcrV2
         return true;
     }
 
-    inline Result recognize(std::vector<BYTE> pixels, int width, int height)
+    inline Result recognizeWindows(std::vector<BYTE> pixels, int width, int height)
     {
         Result result;
         bool apartmentReady = false;
-        std::wstring paddleFailure;
         try {
             winrt::init_apartment(winrt::apartment_type::multi_threaded);
             apartmentReady = true;
 
-            // First choice: bundled, fully local PaddleOCR-json. It provides much better
-            // screenshot OCR accuracy and already returns bounding boxes + confidence.
-            auto paddle = WeShotPaddleOcr::recognize(pixels, width, height);
-            if (paddle.available && paddle.success) {
-                result.text = std::move(paddle.text);
-                result.words.reserve(paddle.blocks.size());
-                for (auto& b : paddle.blocks) {
-                    result.words.push_back({ std::move(b.text), b.x, b.y, b.w, b.h });
-                }
-                result.engine = L"PaddleOCR";
-                winrt::uninit_apartment();
-                return result;
-            }
-            if (paddle.available) paddleFailure = paddle.error;
-
-            // Compatibility fallback: Windows OCR. This keeps OCR usable even if the bundled
-            // engine cannot start on an unusual CPU or its files were removed.
             using namespace winrt::Windows::Storage::Streams;
             using namespace winrt::Windows::Graphics::Imaging;
             using namespace winrt::Windows::Media::Ocr;
@@ -226,9 +126,7 @@ namespace WeShotOcrV2
 
             auto engine = OcrEngine::TryCreateFromUserProfileLanguages();
             if (!engine) {
-                result.error = paddleFailure.empty()
-                    ? L"当前 Windows 没有可用的 OCR 语言包。"
-                    : std::wstring(L"PaddleOCR 不可用：") + paddleFailure + L"；Windows OCR 也不可用。";
+                result.error = L"当前 Windows 没有可用的 OCR 语言包。";
             }
             else {
                 auto ocr = engine.RecognizeAsync(bitmap).get();
@@ -237,14 +135,10 @@ namespace WeShotOcrV2
                     if (!firstLine) result.text += L"\r\n";
                     firstLine = false;
                     result.text += line.Text().c_str();
-                    for (auto const& word : line.Words()) {
-                        auto rc = word.BoundingRect();
-                        result.words.push_back({ word.Text().c_str(), rc.X, rc.Y, rc.Width, rc.Height });
-                    }
                 }
                 if (result.text.empty()) result.error = L"没有识别到文字。";
-                else result.engine = paddleFailure.empty() ? L"Windows OCR" : L"Windows OCR（Paddle兜底）";
             }
+
             winrt::uninit_apartment();
             apartmentReady = false;
         }
@@ -259,158 +153,245 @@ namespace WeShotOcrV2
         return result;
     }
 
-    inline void ensurePanel(WinCap* win)
+    class OcrResultWindow : public Ling::WinBase
     {
-        if (!win) return;
-        if (state.win == win && state.panel) {
-            state.panel->show();
-            if (state.textBox) state.textBox->show();
-            layoutPanel();
-            return;
+    public:
+        OcrResultWindow(std::vector<BYTE> data, int imgW, int imgH)
+            : pixels(std::move(data)), imageW(imgW), imageH(imgH)
+        {
+            setTitle(L"WeShot - 文字识别");
+            setSize(1080.f, 680.f);
+            setMinSize(760.f, 440.f);
+            setCenter();
+
+            onMouseDown.add([this](POINT pos, bool isRight) {
+                if (isRight && imageCanvas && imageCanvas->isPosIn(pos)) {
+                    showImageContextMenu();
+                }
+            });
+            onSizeChanged.add([this]() { refresh(); });
+            onDestroy.add([this]() {
+                ++requestId;
+                if (activeWindow == this) activeWindow = nullptr;
+                auto dying = this;
+                Ling::App::get()->dq.TryEnqueue([dying]() {
+                    delete dying;
+                    auto app = Ling::App::get();
+                    auto it = app->args.find(L"--auto-quit");
+                    if (it != app->args.end() && it->second == L"true") app->quit(0);
+                });
+            });
         }
 
-        state.win = win;
-        state.panel = win->body->makeChild<Ling::Node>();
-        state.panel->setPositionType(Ling::Position::Absolute);
-        state.panel->setFlexDirection(Ling::FlexDirection::Column);
-        state.panel->setBg(0xFFFFFFFF);
-        state.panel->setBorder(1.f, 0xD4D4D4FF);
-        state.panel->setBorderRadius(0.f);
+        void open()
+        {
+            createNativeWindow(0, WS_OVERLAPPEDWINDOW);
+        }
 
-        state.header = state.panel->makeChild<Ling::Node>();
-        state.header->setPositionType(Ling::Position::Absolute);
-        state.header->setPosition(Ling::Edge::Left, 8.f);
-        state.header->setPosition(Ling::Edge::Top, 4.f);
-        state.header->setSize(314.f, 30.f);
-        state.header->setFlexDirection(Ling::FlexDirection::Row);
-        state.header->setAlignItems(Ling::Align::Center);
+        void setOcrResult(Result result)
+        {
+            if (!textBox || !status) return;
+            if (!result.error.empty()) {
+                status->setText(L"识别完成");
+                textBox->setPlaceholder(L"");
+                textBox->setText(result.error);
+                fullText.clear();
+            }
+            else {
+                fullText = std::move(result.text);
+                status->setText(L"可直接用鼠标拖选文字，按 Ctrl+C 复制");
+                textBox->setPlaceholder(L"");
+                textBox->setText(fullText);
+            }
+            refresh();
+        }
 
-        state.title = state.header->makeChild<Ling::Label>();
-        state.title->setText(L"文字识别");
-        state.title->setFontSize(15.f);
-        state.title->setColor(0x222222FF);
-        state.title->setFlexGrow(1.f);
+    protected:
+        void onCreated() override
+        {
+            body->setBg(0xF4F4F4FF);
+            body->setFlexDirection(Ling::FlexDirection::Row);
 
-        state.copyBtn = state.header->makeChild<Ling::Button>();
-        state.copyBtn->setText(L"复制全部");
-        state.copyBtn->setSize(68.f, 26.f);
-        state.copyBtn->setFontSize(12.f);
-        state.copyBtn->setColor(0x333333FF);
-        state.copyBtn->setBg(0xF5F5F5FF);
-        state.copyBtn->setHoverBg(0xEBEBEBFF);
-        state.copyBtn->setBorderRadius(5.f);
-        state.copyBtn->setMarginRight(6.f);
-        state.copyBtn->onClick.add([](Ling::Button*) {
-            const bool ok = copyTextReliable(state.text);
-            if (state.status) state.status->setText(ok ? L"已复制全部文字" : L"复制失败，请重试");
-        });
+            imageCanvas = body->makeChild<Ling::Canvas>();
+            imageCanvas->setFlexGrow(1.f);
+            imageCanvas->setHeightPercent(100.f);
+            imageCanvas->setBg(0xF2F2F2FF);
 
-        state.closeBtn = state.header->makeChild<Ling::Button>();
-        state.closeBtn->setText(L"×");
-        state.closeBtn->setSize(26.f, 26.f);
-        state.closeBtn->setFontSize(17.f);
-        state.closeBtn->setColor(0x666666FF);
-        state.closeBtn->setHoverBg(0xF2F2F2FF);
-        state.closeBtn->setBorderRadius(5.f);
-        state.closeBtn->onClick.add([](Ling::Button*) {
-            if (state.panel) state.panel->hide();
-        });
+            auto divider = body->makeChild<Ling::Node>();
+            divider->setWidth(1.f);
+            divider->setHeightPercent(100.f);
+            divider->setBg(0xD9D9D9FF);
 
-        state.status = state.panel->makeChild<Ling::Label>();
-        state.status->setPositionType(Ling::Position::Absolute);
-        state.status->setPosition(Ling::Edge::Left, 8.f);
-        state.status->setPosition(Ling::Edge::Top, 34.f);
-        state.status->setSize(314.f, 22.f);
-        state.status->setText(L"");
-        state.status->setFontSize(12.f);
-        state.status->setColor(0x888888FF);
+            auto right = body->makeChild<Ling::Node>();
+            right->setWidth(380.f);
+            right->setHeightPercent(100.f);
+            right->setPadding(12.f);
+            right->setBg(0xFFFFFFFF);
+            right->setFlexDirection(Ling::FlexDirection::Column);
 
-        // Composited text view: it stays in the same DirectComposition tree as the screenshot,
-        // so it cannot disappear behind the capture surface. TextBox also clips, scrolls and
-        // supports mouse selection + Ctrl+C natively.
-        state.textBox = state.panel->makeChild<Ling::TextBox>();
-        state.textBox->setPositionType(Ling::Position::Absolute);
-        state.textBox->setFontSize(14.f);
-        state.textBox->setPadding(8.f);
-        state.textBox->setBg(0xFAFAFAFF);
-        state.textBox->setBorder(1.f, 0xE3E3E3FF);
-        state.textBox->setBorderRadius(3.f);
-        state.textBox->setSelectionBgColor(0xB8DDF799);
-        state.textBox->setCaretColor(0x00000000);
-        state.textBox->onTextChanged.add([](Ling::TextBox* box, const std::wstring& value) {
-            if (state.internalTextUpdate || value == state.text) return;
-            // Keep OCR output read-only while retaining selection/copy behavior.
-            state.internalTextUpdate = true;
-            box->setText(state.text);
-            state.internalTextUpdate = false;
-        });
+            auto header = right->makeChild<Ling::Node>();
+            header->setHeight(38.f);
+            header->setWidthPercent(100.f);
+            header->setFlexDirection(Ling::FlexDirection::Row);
+            header->setAlignItems(Ling::Align::Center);
 
-        win->onMouseMove.add([](POINT) { if (state.panel) layoutPanel(); });
-        win->onDpiChanged.add([]() { if (state.panel) layoutPanel(); });
-        win->onDestroy.add([]() {
-            state.requestId.fetch_add(1);
-            state.win = nullptr;
-            state.panel = nullptr;
-            state.header = nullptr;
-            state.title = nullptr;
-            state.status = nullptr;
-            state.textBox = nullptr;
-            state.copyBtn = nullptr;
-            state.closeBtn = nullptr;
-            state.text.clear();
-            state.words.clear();
-            state.busy = false;
-            state.internalTextUpdate = false;
-        });
+            auto title = header->makeChild<Ling::Label>();
+            title->setText(L"识别文字");
+            title->setFontSize(16.f);
+            title->setColor(0x222222FF);
+            title->setFlexGrow(1.f);
 
-        layoutPanel();
-        state.panel->show();
-        state.textBox->show();
-        win->refresh();
+            auto copyAll = header->makeChild<Ling::Button>();
+            copyAll->setText(L"复制全部");
+            copyAll->setSize(76.f, 28.f);
+            copyAll->setFontSize(12.f);
+            copyAll->setBg(0xF3F3F3FF);
+            copyAll->setHoverBg(0xE9E9E9FF);
+            copyAll->setBorder(1.f, 0xDDDDDDFF);
+            copyAll->setBorderRadius(4.f);
+            copyAll->onClick.add([this](Ling::Button*) {
+                if (copyTextReliable(hwnd, fullText)) status->setText(L"已复制全部文字");
+                else if (!fullText.empty()) status->setText(L"复制失败，请重试");
+            });
+
+            status = right->makeChild<Ling::Label>();
+            status->setHeight(28.f);
+            status->setWidthPercent(100.f);
+            status->setText(L"正在识别... 左侧图片可右键复制或另存为");
+            status->setFontSize(12.f);
+            status->setColor(0x777777FF);
+
+            textBox = right->makeChild<Ling::TextBox>();
+            textBox->setFlexGrow(1.f);
+            textBox->setWidthPercent(100.f);
+            textBox->setFontSize(14.f);
+            textBox->setPadding(10.f);
+            textBox->setBg(0xFAFAFAFF);
+            textBox->setBorder(1.f, 0xE1E1E1FF);
+            textBox->setBorderRadius(4.f);
+            textBox->setSelectionBgColor(0xB8DDF799);
+            textBox->setPlaceholder(L"正在识别...");
+
+            if (imageW > 0 && imageH > 0 && !pixels.empty()) {
+                D2D1_BITMAP_PROPERTIES1 props{};
+                props.pixelFormat = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
+                props.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;
+                props.dpiX = 96.f;
+                props.dpiY = 96.f;
+                Ling::D2D::get()->deviceContext->CreateBitmap(
+                    D2D1::SizeU((UINT32)imageW, (UINT32)imageH), pixels.data(), (UINT32)imageW * 4,
+                    &props, imageBitmap.GetAddressOf());
+            }
+
+            show();
+            SetForegroundWindow(hwnd);
+        }
+
+        void layout() override
+        {
+            Ling::WinBase::layout();
+            paintImage();
+        }
+
+        LRESULT onHitTest(const POINT pos) override
+        {
+            return DefWindowProcW(hwnd, WM_NCHITTEST, 0, MAKELPARAM(pos.x, pos.y));
+        }
+
+    private:
+        void paintImage()
+        {
+            if (!imageCanvas) return;
+            auto ctx = imageCanvas->startPaint();
+            if (!ctx) return;
+            ctx->Clear(D2D1::ColorF(0xF2F2F2));
+
+            if (imageBitmap && imageW > 0 && imageH > 0) {
+                const float cw = imageCanvas->w;
+                const float ch = imageCanvas->h;
+                const float margin = 18.f * dpi;
+                const float availW = (std::max)(1.f, cw - margin * 2.f);
+                const float availH = (std::max)(1.f, ch - margin * 2.f);
+                float scale = (std::min)(availW / imageW, availH / imageH);
+                scale = (std::min)(1.f, (std::max)(0.01f, scale));
+                const float dw = imageW * scale;
+                const float dh = imageH * scale;
+                const float left = (cw - dw) * 0.5f;
+                const float top = (ch - dh) * 0.5f;
+                auto dest = D2D1::RectF(left, top, left + dw, top + dh);
+                ctx->DrawBitmap(imageBitmap.Get(), dest, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+            }
+
+            imageCanvas->finishPaint();
+        }
+
+        void showImageContextMenu()
+        {
+            HMENU menu = CreatePopupMenu();
+            if (!menu) return;
+            AppendMenuW(menu, MF_STRING, 1, L"复制图片");
+            AppendMenuW(menu, MF_STRING, 2, L"另存为 PNG...");
+
+            POINT pt{};
+            GetCursorPos(&pt);
+            SetForegroundWindow(hwnd);
+            const UINT cmd = TrackPopupMenu(menu,
+                TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY,
+                pt.x, pt.y, 0, hwnd, nullptr);
+            DestroyMenu(menu);
+            PostMessageW(hwnd, WM_NULL, 0, 0);
+
+            if (cmd == 1) {
+                if (!pixels.empty()) Util::saveToClipboard(imageW, imageH, pixels.data());
+            }
+            else if (cmd == 2) {
+                auto path = Util::getSaveFilePath(hwnd, L"png");
+                if (!path.empty() && !pixels.empty()) Util::saveToFile(path, imageW, imageH, pixels.data());
+            }
+        }
+
+    private:
+        std::vector<BYTE> pixels;
+        int imageW{ 0 }, imageH{ 0 };
+        Microsoft::WRL::ComPtr<ID2D1Bitmap1> imageBitmap;
+        Ling::Canvas* imageCanvas{ nullptr };
+        Ling::TextBox* textBox{ nullptr };
+        Ling::Label* status{ nullptr };
+        std::wstring fullText;
+    };
+
+    inline bool containsPoint(POINT)
+    {
+        return false;
+    }
+
+    inline bool hasWindow()
+    {
+        return activeWindow != nullptr;
     }
 
     inline void show(WinCap* win)
     {
         if (!win || !win->cutMask || !win->cutMask->hasRect()) return;
-        ensurePanel(win);
-        if (!state.textBox || state.busy) return;
 
         std::vector<BYTE> pixels;
         int width{ 0 }, height{ 0 };
-        if (!copyCutPixels(win, pixels, width, height)) {
-            if (state.status) state.status->setText(L"读取截图失败");
-            setTextViewText(L"");
-            return;
-        }
+        if (!copyCutPixels(win, pixels, width, height)) return;
 
-        state.busy = true;
-        if (state.status) state.status->setText(L"正在识别...");
-        state.textBox->setPlaceholder(L"正在识别...");
-        setTextViewText(L"");
-        const auto myRequest = ++state.requestId;
+        const auto myRequest = ++requestId;
 
-        std::thread([pixels = std::move(pixels), width, height, myRequest, win]() mutable {
-            auto result = recognize(std::move(pixels), width, height);
-            Ling::App::get()->dq.TryEnqueue([result = std::move(result), myRequest, win]() mutable {
-                if (state.win != win || state.requestId.load() != myRequest || !state.textBox) return;
-                state.busy = false;
-                state.words = std::move(result.words);
-                if (!result.error.empty()) {
-                    if (state.status) state.status->setText(result.error);
-                    state.textBox->setPlaceholder(result.error);
-                    setTextViewText(L"");
-                }
-                else {
-                    if (state.status) {
-                        auto prefix = result.engine.empty() ? L"OCR" : result.engine;
-                        state.status->setText(std::wstring(prefix) + L" · 拖选文字后按 Ctrl+C 可复制");
-                    }
-                    state.textBox->setPlaceholder(L"");
-                    setTextViewText(result.text);
-                }
-                if (state.panel) state.panel->show();
-                if (state.textBox) state.textBox->show();
-                layoutPanel();
+        if (activeWindow) activeWindow->close();
+        activeWindow = new OcrResultWindow(pixels, width, height);
+        activeWindow->open();
+
+        // Result window is independent; finish screenshot mode immediately.
+        win->close();
+
+        std::thread([pixels = std::move(pixels), width, height, myRequest]() mutable {
+            auto result = recognizeWindows(std::move(pixels), width, height);
+            Ling::App::get()->dq.TryEnqueue([result = std::move(result), myRequest]() mutable {
+                if (requestId.load() != myRequest || !activeWindow) return;
+                activeWindow->setOcrResult(std::move(result));
             });
         }).detach();
     }
