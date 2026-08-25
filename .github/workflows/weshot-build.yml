@@ -34,9 +34,9 @@ jobs:
       - name: Build Yoga and Ling
         shell: pwsh
         run: |
-          msbuild D:\project\Ling\yoga\yoga.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:SolutionDir=D:\project\Ling\
+          msbuild D:\project\Ling\yoga\yoga.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=D:\project\Ling\
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          msbuild D:\project\Ling\Ling.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:SolutionDir=D:\project\Ling\
+          msbuild D:\project\Ling\Ling.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=D:\project\Ling\
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Prepare portable GIF build
@@ -61,7 +61,7 @@ jobs:
       - name: Build ScreenCapture
         shell: pwsh
         run: |
-          msbuild Src\ScreenCapture.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:SolutionDir=${{ github.workspace }}\
+          msbuild Src\ScreenCapture.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=${{ github.workspace }}\
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Find executable
