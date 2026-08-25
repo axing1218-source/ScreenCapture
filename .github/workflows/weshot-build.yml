@@ -1,0 +1,72 @@
+name: WeShot Windows Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - weshot-v0.1
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout ScreenCapture fork
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Prepare Ling dependency
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force D:\project | Out-Null
+          if (Test-Path D:\project\Ling) { Remove-Item -Recurse -Force D:\project\Ling }
+          git clone --depth 1 https://github.com/xland/Ling.git D:\project\Ling
+
+      - name: Build Yoga and Ling
+        shell: pwsh
+        run: |
+          msbuild D:\project\Ling\yoga\yoga.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:SolutionDir=D:\project\Ling\
+          msbuild D:\project\Ling\Ling.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:SolutionDir=D:\project\Ling\
+
+      - name: Prepare portable GIF build
+        shell: pwsh
+        run: |
+          # The upstream project contains both gifski and bundled cgif encoders.
+          # For CI test builds use bundled cgif so the build has no external Rust library dependency.
+          $gif = Get-Content Src\Win\VideoGif.hpp -Raw
+          $gif = $gif.Replace('#include "gifski.h"', '')
+          $gif = [regex]::Replace($gif, '(?s)\s*//这段代码是好的.*?inline void createGif2\(GifParam\* param\) \{', "`r`n    inline void createGif2(GifParam* param) {")
+          Set-Content Src\Win\VideoGif.hpp $gif -Encoding utf8
+
+          $video = Get-Content Src\Win\CapVideo.cpp -Raw
+          $video = $video.Replace('VideoGif::createGif(gifParam.get());', 'VideoGif::createGif2(gifParam.get());')
+          Set-Content Src\Win\CapVideo.cpp $video -Encoding utf8
+
+          $proj = Get-Content Src\ScreenCapture.vcxproj -Raw
+          $proj = $proj.Replace('D:\sdk\gifski;', '')
+          $proj = $proj.Replace(';D:\sdk\gifski\target\release\gifski.lib', '')
+          Set-Content Src\ScreenCapture.vcxproj $proj -Encoding utf8
+
+      - name: Build ScreenCapture
+        shell: pwsh
+        run: |
+          msbuild Src\ScreenCapture.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:SolutionDir=${{ github.workspace }}\
+
+      - name: Find executable
+        id: find_exe
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path . -Recurse -Filter ScreenCapture.exe | Where-Object { $_.FullName -match 'Release' } | Select-Object -First 1
+          if (-not $exe) { throw 'ScreenCapture.exe was not produced.' }
+          New-Item -ItemType Directory -Force artifact | Out-Null
+          Copy-Item $exe.FullName artifact\ScreenCapture.exe
+          Write-Host "Built: $($exe.FullName)"
+
+      - name: Upload WeShot test executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: WeShot-Windows-x64
+          path: artifact/ScreenCapture.exe
+          if-no-files-found: error
