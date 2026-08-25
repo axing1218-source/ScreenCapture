@@ -24,11 +24,20 @@ jobs:
           if (Test-Path D:\project\Ling) { Remove-Item -Recurse -Force D:\project\Ling }
           git clone --depth 1 https://github.com/xland/Ling.git D:\project\Ling
 
+          # VS 2026 is stricter about the constexpr lambda in Ling's random AppUserModelID macro.
+          # Keep upstream behavior, but pass the charset explicitly instead of relying on capture.
+          $util = Get-Content D:\project\Ling\include\Util.h -Raw
+          $util = $util.Replace('constexpr auto gen = [](size_t i, size_t idx) {', 'constexpr auto gen = [](std::wstring_view chars, size_t i, size_t idx) {')
+          $util = $util.Replace('std::wstring{gen(I, I)...}', 'std::wstring{gen(chars, I, I)...}')
+          Set-Content D:\project\Ling\include\Util.h $util -Encoding utf8
+
       - name: Build Yoga and Ling
         shell: pwsh
         run: |
           msbuild D:\project\Ling\yoga\yoga.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:SolutionDir=D:\project\Ling\
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           msbuild D:\project\Ling\Ling.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:SolutionDir=D:\project\Ling\
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Prepare portable GIF build
         shell: pwsh
@@ -53,6 +62,7 @@ jobs:
         shell: pwsh
         run: |
           msbuild Src\ScreenCapture.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:PlatformToolset=v143 /p:SolutionDir=${{ github.workspace }}\
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Find executable
         id: find_exe
