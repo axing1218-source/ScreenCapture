@@ -6,6 +6,7 @@
 #include <objidl.h>
 #include <wrl.h>
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <vector>
 #include <winrt/Windows.Data.Json.h>
@@ -15,9 +16,23 @@ namespace GeminiClient
     using Microsoft::WRL::ComPtr;
     using namespace winrt::Windows::Data::Json;
 
+    struct OcrBlock
+    {
+        int ymin{ 0 }, xmin{ 0 }, ymax{ 0 }, xmax{ 0 };
+        std::wstring source;
+    };
+
+    struct OcrResult
+    {
+        bool ok{ false };
+        std::wstring text;
+        std::vector<OcrBlock> blocks;
+        std::wstring error;
+    };
+
     struct TranslationBlock
     {
-        int ymin{ 0 }, xmin{ 0 }, ymax{ 0 }, xmax{ 0 }; // normalized 0..1000
+        int ymin{ 0 }, xmin{ 0 }, ymax{ 0 }, xmax{ 0 };
         std::wstring translation;
     };
 
@@ -35,6 +50,15 @@ namespace GeminiClient
         std::wstring message;
     };
 
+    class ComScope
+    {
+    public:
+        ComScope() : hr(CoInitializeEx(nullptr, COINIT_MULTITHREADED)) {}
+        ~ComScope() { if (SUCCEEDED(hr)) CoUninitialize(); }
+    private:
+        HRESULT hr;
+    };
+
     inline std::string wideToUtf8(const std::wstring& value)
     {
         if (value.empty()) return {};
@@ -49,10 +73,8 @@ namespace GeminiClient
     {
         if (value.empty()) return {};
         int len = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), (int)value.size(), nullptr, 0);
-        if (len <= 0) {
-            len = MultiByteToWideChar(CP_UTF8, 0, value.data(), (int)value.size(), nullptr, 0);
-            if (len <= 0) return {};
-        }
+        if (len <= 0) len = MultiByteToWideChar(CP_UTF8, 0, value.data(), (int)value.size(), nullptr, 0);
+        if (len <= 0) return {};
         std::wstring out((size_t)len, L'\0');
         MultiByteToWideChar(CP_UTF8, 0, value.data(), (int)value.size(), out.data(), len);
         return out;
@@ -80,37 +102,24 @@ namespace GeminiClient
     inline bool encodePng(const std::vector<BYTE>& pixels, int width, int height, std::vector<BYTE>& png)
     {
         if (width <= 0 || height <= 0 || pixels.size() < (size_t)width * height * 4) return false;
-
         ComPtr<IStream> stream;
         if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, stream.GetAddressOf()))) return false;
-
         ComPtr<IWICImagingFactory> factory;
-        auto hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
-            IID_PPV_ARGS(factory.GetAddressOf()));
-        if (FAILED(hr)) return false;
-
+        if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(factory.GetAddressOf())))) return false;
         ComPtr<IWICBitmapEncoder> encoder;
-        hr = factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, encoder.GetAddressOf());
-        if (FAILED(hr)) return false;
-        hr = encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache);
-        if (FAILED(hr)) return false;
-
+        if (FAILED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, encoder.GetAddressOf()))) return false;
+        if (FAILED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache))) return false;
         ComPtr<IWICBitmapFrameEncode> frame;
-        hr = encoder->CreateNewFrame(frame.GetAddressOf(), nullptr);
-        if (FAILED(hr)) return false;
-        hr = frame->Initialize(nullptr);
-        if (FAILED(hr)) return false;
-        hr = frame->SetSize((UINT)width, (UINT)height);
-        if (FAILED(hr)) return false;
+        if (FAILED(encoder->CreateNewFrame(frame.GetAddressOf(), nullptr))) return false;
+        if (FAILED(frame->Initialize(nullptr))) return false;
+        if (FAILED(frame->SetSize((UINT)width, (UINT)height))) return false;
         WICPixelFormatGUID fmt = GUID_WICPixelFormat32bppBGRA;
-        hr = frame->SetPixelFormat(&fmt);
-        if (FAILED(hr) || !IsEqualGUID(fmt, GUID_WICPixelFormat32bppBGRA)) return false;
+        if (FAILED(frame->SetPixelFormat(&fmt)) || !IsEqualGUID(fmt, GUID_WICPixelFormat32bppBGRA)) return false;
         const UINT rowBytes = (UINT)width * 4;
-        hr = frame->WritePixels((UINT)height, rowBytes, rowBytes * (UINT)height,
-            const_cast<BYTE*>(pixels.data()));
-        if (FAILED(hr)) return false;
+        if (FAILED(frame->WritePixels((UINT)height, rowBytes, rowBytes * (UINT)height,
+            const_cast<BYTE*>(pixels.data())))) return false;
         if (FAILED(frame->Commit()) || FAILED(encoder->Commit())) return false;
-
         STATSTG stat{};
         if (FAILED(stream->Stat(&stat, STATFLAG_NONAME))) return false;
         const size_t size = (size_t)stat.cbSize.QuadPart;
@@ -131,44 +140,28 @@ namespace GeminiClient
         std::wstring error;
     };
 
-    inline HttpResult postJson(const std::wstring& apiKey, const std::wstring& json)
+    inline HttpResult postGenerate(const std::wstring& apiKey, const std::wstring& model, const std::wstring& json)
     {
         HttpResult result;
-        if (apiKey.empty()) {
-            result.error = L"Gemini API Key 为空。";
-            return result;
-        }
-
-        HINTERNET session = WinHttpOpen(L"WeShot/0.7", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+        if (apiKey.empty()) { result.error = L"Gemini API Key 为空。"; return result; }
+        const auto modelId = model.empty() ? std::wstring(L"gemini-3.7-flash") : model;
+        HINTERNET session = WinHttpOpen(L"WeShot/0.8", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
             WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
-        if (!session) {
-            result.error = L"无法初始化网络连接。";
-            return result;
-        }
-        WinHttpSetTimeouts(session, 10000, 10000, 30000, 120000);
-
+        if (!session) { result.error = L"无法初始化网络连接。"; return result; }
+        // 截图工具不应让一次请求挂一分钟。连接失败尽快反馈；正常 Flash 请求通常远低于此上限。
+        WinHttpSetTimeouts(session, 8000, 8000, 15000, 25000);
         HINTERNET connect = WinHttpConnect(session, L"generativelanguage.googleapis.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
-        if (!connect) {
-            WinHttpCloseHandle(session);
-            result.error = L"无法连接 Gemini API。";
-            return result;
-        }
-
-        HINTERNET request = WinHttpOpenRequest(connect, L"POST", L"/v1beta/interactions",
-            nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+        if (!connect) { WinHttpCloseHandle(session); result.error = L"无法连接 Gemini API。"; return result; }
+        std::wstring path = L"/v1beta/models/" + modelId + L":generateContent";
+        HINTERNET request = WinHttpOpenRequest(connect, L"POST", path.c_str(), nullptr,
+            WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
         if (!request) {
-            WinHttpCloseHandle(connect);
-            WinHttpCloseHandle(session);
-            result.error = L"无法创建 Gemini 请求。";
-            return result;
+            WinHttpCloseHandle(connect); WinHttpCloseHandle(session);
+            result.error = L"无法创建 Gemini 请求。"; return result;
         }
-
-        std::wstring headers = L"Content-Type: application/json\r\n";
-        headers += L"x-goog-api-key: " + apiKey + L"\r\n";
-        headers += L"Api-Revision: 2026-05-20\r\n";
+        std::wstring headers = L"Content-Type: application/json\r\nx-goog-api-key: " + apiKey + L"\r\n";
         WinHttpAddRequestHeaders(request, headers.c_str(), (DWORD)-1L,
             WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
-
         auto body = wideToUtf8(json);
         BOOL sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
             body.empty() ? WINHTTP_NO_REQUEST_DATA : body.data(), (DWORD)body.size(), (DWORD)body.size(), 0);
@@ -180,7 +173,6 @@ namespace GeminiClient
             DWORD statusSize = sizeof(result.status);
             WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                 WINHTTP_HEADER_NAME_BY_INDEX, &result.status, &statusSize, WINHTTP_NO_HEADER_INDEX);
-
             for (;;) {
                 DWORD available = 0;
                 if (!WinHttpQueryDataAvailable(request, &available) || available == 0) break;
@@ -188,13 +180,11 @@ namespace GeminiClient
                 result.body.resize(oldSize + available);
                 DWORD read = 0;
                 if (!WinHttpReadData(request, result.body.data() + oldSize, available, &read)) {
-                    result.body.resize(oldSize);
-                    break;
+                    result.body.resize(oldSize); break;
                 }
                 result.body.resize(oldSize + read);
             }
         }
-
         WinHttpCloseHandle(request);
         WinHttpCloseHandle(connect);
         WinHttpCloseHandle(session);
@@ -212,114 +202,242 @@ namespace GeminiClient
                 if (!msg.empty()) return msg;
             }
         }
-        if (wide.size() > 400) return wide.substr(0, 400) + L"...";
-        return wide;
+        return wide.size() > 500 ? wide.substr(0, 500) + L"..." : wide;
     }
 
-    inline std::wstring extractOutputText(const std::string& response)
+    inline std::wstring extractGenerateText(const std::string& response)
     {
         JsonObject root{ nullptr };
-        auto wide = utf8ToWide(response);
-        if (!JsonObject::TryParse(wide, root)) return {};
-
-        auto direct = std::wstring{ root.GetNamedString(L"output_text", L"") };
-        if (!direct.empty()) return direct;
-
-        auto steps = root.GetNamedArray(L"steps", nullptr);
-        if (!steps) return {};
-        for (uint32_t i = 0; i < steps.Size(); ++i) {
-            auto step = steps.GetObjectAt(i);
-            if (std::wstring{ step.GetNamedString(L"type", L"") } != L"model_output") continue;
-            auto content = step.GetNamedArray(L"content", nullptr);
-            if (!content) continue;
-            for (uint32_t j = 0; j < content.Size(); ++j) {
-                auto item = content.GetObjectAt(j);
-                if (std::wstring{ item.GetNamedString(L"type", L"") } != L"text") continue;
-                auto text = std::wstring{ item.GetNamedString(L"text", L"") };
-                if (!text.empty()) return text;
-            }
+        if (!JsonObject::TryParse(utf8ToWide(response), root)) return {};
+        auto candidates = root.GetNamedArray(L"candidates", nullptr);
+        if (!candidates || candidates.Size() == 0) return {};
+        auto content = candidates.GetObjectAt(0).GetNamedObject(L"content", nullptr);
+        if (!content) return {};
+        auto parts = content.GetNamedArray(L"parts", nullptr);
+        if (!parts) return {};
+        for (uint32_t i = 0; i < parts.Size(); ++i) {
+            auto part = parts.GetObjectAt(i);
+            auto text = std::wstring{ part.GetNamedString(L"text", L"") };
+            if (!text.empty()) return text;
         }
         return {};
     }
 
-    inline JsonObject makeTranslationSchema()
+    inline JsonObject makeBoxSchema()
     {
-        JsonObject integerType;
-        integerType.SetNamedValue(L"type", JsonValue::CreateStringValue(L"integer"));
+        JsonObject intType;
+        intType.SetNamedValue(L"type", JsonValue::CreateStringValue(L"integer"));
+        JsonObject box;
+        box.SetNamedValue(L"type", JsonValue::CreateStringValue(L"array"));
+        box.SetNamedValue(L"items", intType);
+        box.SetNamedValue(L"minItems", JsonValue::CreateNumberValue(4));
+        box.SetNamedValue(L"maxItems", JsonValue::CreateNumberValue(4));
+        return box;
+    }
 
-        JsonObject boxArray;
-        boxArray.SetNamedValue(L"type", JsonValue::CreateStringValue(L"array"));
-        boxArray.SetNamedValue(L"items", integerType);
-        boxArray.SetNamedValue(L"description", JsonValue::CreateStringValue(
-            L"[ymin, xmin, ymax, xmax], normalized to 0-1000"));
-
-        JsonObject translationType;
-        translationType.SetNamedValue(L"type", JsonValue::CreateStringValue(L"string"));
-
+    inline JsonObject makeOcrSchema()
+    {
+        JsonObject strType; strType.SetNamedValue(L"type", JsonValue::CreateStringValue(L"string"));
         JsonObject blockProps;
-        blockProps.SetNamedValue(L"box_2d", boxArray);
-        blockProps.SetNamedValue(L"translation", translationType);
-
-        JsonArray blockRequired;
-        blockRequired.Append(JsonValue::CreateStringValue(L"box_2d"));
-        blockRequired.Append(JsonValue::CreateStringValue(L"translation"));
-
-        JsonObject blockItem;
-        blockItem.SetNamedValue(L"type", JsonValue::CreateStringValue(L"object"));
-        blockItem.SetNamedValue(L"properties", blockProps);
-        blockItem.SetNamedValue(L"required", blockRequired);
-
-        JsonObject blocksArray;
-        blocksArray.SetNamedValue(L"type", JsonValue::CreateStringValue(L"array"));
-        blocksArray.SetNamedValue(L"items", blockItem);
-
-        JsonObject translatedType;
-        translatedType.SetNamedValue(L"type", JsonValue::CreateStringValue(L"string"));
-
+        blockProps.SetNamedValue(L"box_2d", makeBoxSchema());
+        blockProps.SetNamedValue(L"text", strType);
+        JsonArray blockReq;
+        blockReq.Append(JsonValue::CreateStringValue(L"box_2d"));
+        blockReq.Append(JsonValue::CreateStringValue(L"text"));
+        JsonObject block;
+        block.SetNamedValue(L"type", JsonValue::CreateStringValue(L"object"));
+        block.SetNamedValue(L"properties", blockProps);
+        block.SetNamedValue(L"required", blockReq);
+        JsonObject blocks;
+        blocks.SetNamedValue(L"type", JsonValue::CreateStringValue(L"array"));
+        blocks.SetNamedValue(L"items", block);
         JsonObject props;
-        props.SetNamedValue(L"translated_text", translatedType);
-        props.SetNamedValue(L"blocks", blocksArray);
-
-        JsonArray required;
-        required.Append(JsonValue::CreateStringValue(L"translated_text"));
-        required.Append(JsonValue::CreateStringValue(L"blocks"));
-
+        props.SetNamedValue(L"full_text", strType);
+        props.SetNamedValue(L"blocks", blocks);
+        JsonArray req;
+        req.Append(JsonValue::CreateStringValue(L"full_text"));
+        req.Append(JsonValue::CreateStringValue(L"blocks"));
         JsonObject schema;
         schema.SetNamedValue(L"type", JsonValue::CreateStringValue(L"object"));
         schema.SetNamedValue(L"properties", props);
-        schema.SetNamedValue(L"required", required);
+        schema.SetNamedValue(L"required", req);
         return schema;
+    }
+
+    inline JsonObject makeTranslationSchema()
+    {
+        JsonObject strType; strType.SetNamedValue(L"type", JsonValue::CreateStringValue(L"string"));
+        JsonObject blockProps;
+        blockProps.SetNamedValue(L"box_2d", makeBoxSchema());
+        blockProps.SetNamedValue(L"translation", strType);
+        JsonArray blockReq;
+        blockReq.Append(JsonValue::CreateStringValue(L"box_2d"));
+        blockReq.Append(JsonValue::CreateStringValue(L"translation"));
+        JsonObject block;
+        block.SetNamedValue(L"type", JsonValue::CreateStringValue(L"object"));
+        block.SetNamedValue(L"properties", blockProps);
+        block.SetNamedValue(L"required", blockReq);
+        JsonObject blocks;
+        blocks.SetNamedValue(L"type", JsonValue::CreateStringValue(L"array"));
+        blocks.SetNamedValue(L"items", block);
+        JsonObject props;
+        props.SetNamedValue(L"translated_text", strType);
+        props.SetNamedValue(L"blocks", blocks);
+        JsonArray req;
+        req.Append(JsonValue::CreateStringValue(L"translated_text"));
+        req.Append(JsonValue::CreateStringValue(L"blocks"));
+        JsonObject schema;
+        schema.SetNamedValue(L"type", JsonValue::CreateStringValue(L"object"));
+        schema.SetNamedValue(L"properties", props);
+        schema.SetNamedValue(L"required", req);
+        return schema;
+    }
+
+    inline JsonObject makeTextTranslationSchema()
+    {
+        JsonObject strType; strType.SetNamedValue(L"type", JsonValue::CreateStringValue(L"string"));
+        JsonObject intType; intType.SetNamedValue(L"type", JsonValue::CreateStringValue(L"integer"));
+        JsonObject itemProps;
+        itemProps.SetNamedValue(L"id", intType);
+        itemProps.SetNamedValue(L"translation", strType);
+        JsonArray itemReq;
+        itemReq.Append(JsonValue::CreateStringValue(L"id"));
+        itemReq.Append(JsonValue::CreateStringValue(L"translation"));
+        JsonObject item;
+        item.SetNamedValue(L"type", JsonValue::CreateStringValue(L"object"));
+        item.SetNamedValue(L"properties", itemProps);
+        item.SetNamedValue(L"required", itemReq);
+        JsonObject items;
+        items.SetNamedValue(L"type", JsonValue::CreateStringValue(L"array"));
+        items.SetNamedValue(L"items", item);
+        JsonObject props;
+        props.SetNamedValue(L"translated_text", strType);
+        props.SetNamedValue(L"items", items);
+        JsonArray req;
+        req.Append(JsonValue::CreateStringValue(L"translated_text"));
+        req.Append(JsonValue::CreateStringValue(L"items"));
+        JsonObject schema;
+        schema.SetNamedValue(L"type", JsonValue::CreateStringValue(L"object"));
+        schema.SetNamedValue(L"properties", props);
+        schema.SetNamedValue(L"required", req);
+        return schema;
+    }
+
+    inline void addFastThinking(JsonObject& generationConfig, const std::wstring& model)
+    {
+        JsonObject thinking;
+        if (model.find(L"2.5") != std::wstring::npos) {
+            thinking.SetNamedValue(L"thinkingBudget", JsonValue::CreateNumberValue(0));
+        }
+        else {
+            // Flash 截图 OCR/翻译属于简单视觉任务，minimal 优先低延迟；非 Flash 用 low 更稳妥。
+            thinking.SetNamedValue(L"thinkingLevel", JsonValue::CreateStringValue(
+                model.find(L"flash") != std::wstring::npos ? L"minimal" : L"low"));
+        }
+        generationConfig.SetNamedValue(L"thinkingConfig", thinking);
+    }
+
+    inline JsonObject makeBaseRequest(const std::wstring& model, const std::wstring& prompt,
+        const std::vector<BYTE>* png, JsonObject schema, int maxOutputTokens = 8192)
+    {
+        JsonArray parts;
+        if (png && !png->empty()) {
+            JsonObject blob;
+            blob.SetNamedValue(L"mimeType", JsonValue::CreateStringValue(L"image/png"));
+            blob.SetNamedValue(L"data", JsonValue::CreateStringValue(utf8ToWide(base64Encode(png->data(), png->size()))));
+            JsonObject imagePart;
+            imagePart.SetNamedValue(L"inlineData", blob);
+            parts.Append(imagePart);
+        }
+        JsonObject textPart;
+        textPart.SetNamedValue(L"text", JsonValue::CreateStringValue(prompt));
+        parts.Append(textPart);
+        JsonObject content;
+        content.SetNamedValue(L"role", JsonValue::CreateStringValue(L"user"));
+        content.SetNamedValue(L"parts", parts);
+        JsonArray contents;
+        contents.Append(content);
+        JsonObject generation;
+        generation.SetNamedValue(L"responseMimeType", JsonValue::CreateStringValue(L"application/json"));
+        generation.SetNamedValue(L"responseSchema", schema);
+        generation.SetNamedValue(L"maxOutputTokens", JsonValue::CreateNumberValue(maxOutputTokens));
+        addFastThinking(generation, model);
+        JsonObject root;
+        root.SetNamedValue(L"contents", contents);
+        root.SetNamedValue(L"generationConfig", generation);
+        return root;
+    }
+
+    inline bool readBox(JsonArray box, int& ymin, int& xmin, int& ymax, int& xmax)
+    {
+        if (!box || box.Size() < 4) return false;
+        ymin = std::clamp((int)std::lround(box.GetNumberAt(0)), 0, 1000);
+        xmin = std::clamp((int)std::lround(box.GetNumberAt(1)), 0, 1000);
+        ymax = std::clamp((int)std::lround(box.GetNumberAt(2)), 0, 1000);
+        xmax = std::clamp((int)std::lround(box.GetNumberAt(3)), 0, 1000);
+        return ymax > ymin && xmax > xmin;
     }
 
     inline TestResult testConnection(const std::wstring& apiKey, const std::wstring& model)
     {
         TestResult out;
-        JsonObject root;
-        root.SetNamedValue(L"model", JsonValue::CreateStringValue(model.empty() ? L"gemini-3.7-flash" : model));
-        JsonArray input;
-        JsonObject text;
-        text.SetNamedValue(L"type", JsonValue::CreateStringValue(L"text"));
-        text.SetNamedValue(L"text", JsonValue::CreateStringValue(L"Reply with exactly: OK"));
-        input.Append(text);
-        root.SetNamedValue(L"input", input);
-
-        auto http = postJson(apiKey, root.Stringify().c_str());
-        if (!http.error.empty()) {
-            out.message = http.error;
-            return out;
-        }
+        const auto modelId = model.empty() ? std::wstring(L"gemini-3.7-flash") : model;
+        JsonArray parts;
+        JsonObject part; part.SetNamedValue(L"text", JsonValue::CreateStringValue(L"Reply with exactly OK"));
+        parts.Append(part);
+        JsonObject content; content.SetNamedValue(L"parts", parts);
+        JsonArray contents; contents.Append(content);
+        JsonObject generation; addFastThinking(generation, modelId);
+        generation.SetNamedValue(L"maxOutputTokens", JsonValue::CreateNumberValue(16));
+        JsonObject root; root.SetNamedValue(L"contents", contents); root.SetNamedValue(L"generationConfig", generation);
+        auto http = postGenerate(apiKey, modelId, root.Stringify().c_str());
+        if (!http.error.empty()) { out.message = http.error; return out; }
         if (http.status < 200 || http.status >= 300) {
-            out.message = std::format(L"连接失败（HTTP {}）：{}", http.status, getApiError(http.body));
-            return out;
+            out.message = std::format(L"连接失败（HTTP {}）：{}", http.status, getApiError(http.body)); return out;
         }
-        auto textOut = extractOutputText(http.body);
-        if (textOut.empty()) {
-            out.message = L"Gemini 已响应，但没有返回文本。";
-            return out;
+        if (extractGenerateText(http.body).empty()) { out.message = L"Gemini 已响应，但没有返回文本。"; return out; }
+        out.ok = true; out.message = L"连接成功"; return out;
+    }
+
+    inline OcrResult recognizeImage(const std::vector<BYTE>& pixels, int width, int height,
+        const std::wstring& apiKey, const std::wstring& model)
+    {
+        OcrResult out;
+        ComScope com;
+        std::vector<BYTE> png;
+        if (!encodePng(pixels, width, height, png)) { out.error = L"图片编码失败。"; return out; }
+        if (png.size() > 14 * 1024 * 1024) { out.error = L"图片过大，长截图分块识别将在后续版本处理。"; return out; }
+        const auto modelId = model.empty() ? std::wstring(L"gemini-3.7-flash") : model;
+        auto req = makeBaseRequest(modelId,
+            L"OCR this screenshot. Extract every readable text exactly as shown. Return full_text in natural reading order and blocks. "
+            L"Each block must contain the exact source text and box_2d=[ymin,xmin,ymax,xmax] normalized 0-1000. "
+            L"Do not translate, summarize, correct spelling, or add commentary. Include small UI labels when readable.",
+            &png, makeOcrSchema(), 8192);
+        auto http = postGenerate(apiKey, modelId, req.Stringify().c_str());
+        if (!http.error.empty()) { out.error = http.error; return out; }
+        if (http.status < 200 || http.status >= 300) {
+            out.error = std::format(L"Gemini OCR 失败（HTTP {}）：{}", http.status, getApiError(http.body)); return out;
         }
-        out.ok = true;
-        out.message = L"连接成功";
-        return out;
+        auto text = extractGenerateText(http.body);
+        JsonObject payload{ nullptr };
+        if (text.empty() || !JsonObject::TryParse(text, payload)) { out.error = L"Gemini OCR 返回格式无法解析。"; return out; }
+        out.text = std::wstring{ payload.GetNamedString(L"full_text", L"") };
+        auto blocks = payload.GetNamedArray(L"blocks", nullptr);
+        if (blocks) {
+            for (uint32_t i = 0; i < blocks.Size(); ++i) {
+                auto item = blocks.GetObjectAt(i);
+                auto box = item.GetNamedArray(L"box_2d", nullptr);
+                auto source = std::wstring{ item.GetNamedString(L"text", L"") };
+                OcrBlock b;
+                if (source.empty() || !readBox(box, b.ymin, b.xmin, b.ymax, b.xmax)) continue;
+                b.source = std::move(source); out.blocks.push_back(std::move(b));
+            }
+        }
+        if (out.text.empty() && !out.blocks.empty()) {
+            for (auto& b : out.blocks) { if (!out.text.empty()) out.text += L"\r\n"; out.text += b.source; }
+        }
+        if (out.text.empty()) { out.error = L"Gemini 没有识别到文字。"; return out; }
+        out.ok = true; return out;
     }
 
     inline TranslationResult translateImage(const std::vector<BYTE>& pixels, int width, int height,
@@ -327,99 +445,88 @@ namespace GeminiClient
         const std::wstring& targetLanguage = L"Simplified Chinese")
     {
         TranslationResult out;
+        ComScope com;
         std::vector<BYTE> png;
-        if (!encodePng(pixels, width, height, png)) {
-            out.error = L"图片编码失败。";
-            return out;
-        }
-        // Gemini inline media has a 20 MB total request limit. Leave headroom for base64 + prompt.
-        if (png.size() > 14 * 1024 * 1024) {
-            out.error = L"图片过大，当前测试版暂时无法一次发送。长截图分块会在下一版处理。";
-            return out;
-        }
-
-        const auto b64 = base64Encode(png.data(), png.size());
-
-        JsonObject root;
-        root.SetNamedValue(L"model", JsonValue::CreateStringValue(model.empty() ? L"gemini-3.7-flash" : model));
-
-        JsonArray input;
-        JsonObject image;
-        image.SetNamedValue(L"type", JsonValue::CreateStringValue(L"image"));
-        image.SetNamedValue(L"mime_type", JsonValue::CreateStringValue(L"image/png"));
-        image.SetNamedValue(L"data", JsonValue::CreateStringValue(utf8ToWide(b64)));
-        input.Append(image);
-
-        JsonObject prompt;
-        prompt.SetNamedValue(L"type", JsonValue::CreateStringValue(L"text"));
-        std::wstring promptText =
+        if (!encodePng(pixels, width, height, png)) { out.error = L"图片编码失败。"; return out; }
+        if (png.size() > 14 * 1024 * 1024) { out.error = L"图片过大，长截图分块翻译将在后续版本处理。"; return out; }
+        const auto modelId = model.empty() ? std::wstring(L"gemini-3.7-flash") : model;
+        auto req = makeBaseRequest(modelId,
             L"Translate every readable text region in this screenshot into " + targetLanguage +
-            L". Return translated_text in natural reading order. Also return one block for every readable text region. "
-            L"Each block must contain only its translation and box_2d as [ymin, xmin, ymax, xmax] normalized to 0-1000. "
-            L"Do not return source/original text. Preserve numbers, URLs, product names and proper nouns when appropriate. "
-            L"Do not omit small UI labels or buttons. Keep translations concise enough to fit the original region.";
-        prompt.SetNamedValue(L"text", JsonValue::CreateStringValue(promptText));
-        input.Append(prompt);
-        root.SetNamedValue(L"input", input);
-
-        JsonObject responseFormat;
-        responseFormat.SetNamedValue(L"type", JsonValue::CreateStringValue(L"text"));
-        responseFormat.SetNamedValue(L"mime_type", JsonValue::CreateStringValue(L"application/json"));
-        responseFormat.SetNamedValue(L"schema", makeTranslationSchema());
-        root.SetNamedValue(L"response_format", responseFormat);
-
-        auto http = postJson(apiKey, root.Stringify().c_str());
-        if (!http.error.empty()) {
-            out.error = http.error;
-            return out;
-        }
+            L". Return translated_text in natural reading order and blocks. Each block contains only translation and "
+            L"box_2d=[ymin,xmin,ymax,xmax] normalized 0-1000. Do not generate or edit an image. Do not add commentary. "
+            L"Keep UI translations concise enough to fit their original regions.",
+            &png, makeTranslationSchema(), 8192);
+        auto http = postGenerate(apiKey, modelId, req.Stringify().c_str());
+        if (!http.error.empty()) { out.error = http.error; return out; }
         if (http.status < 200 || http.status >= 300) {
-            out.error = std::format(L"Gemini 翻译失败（HTTP {}）：{}", http.status, getApiError(http.body));
-            return out;
+            out.error = std::format(L"Gemini 翻译失败（HTTP {}）：{}", http.status, getApiError(http.body)); return out;
         }
-
-        auto outputText = extractOutputText(http.body);
-        if (outputText.empty()) {
-            out.error = L"Gemini 没有返回翻译结果。";
-            return out;
-        }
-
+        auto text = extractGenerateText(http.body);
         JsonObject payload{ nullptr };
-        if (!JsonObject::TryParse(outputText, payload)) {
-            out.error = L"Gemini 返回的翻译数据格式无法解析。";
-            return out;
-        }
-
+        if (text.empty() || !JsonObject::TryParse(text, payload)) { out.error = L"Gemini 翻译返回格式无法解析。"; return out; }
         out.translatedText = std::wstring{ payload.GetNamedString(L"translated_text", L"") };
         auto blocks = payload.GetNamedArray(L"blocks", nullptr);
         if (blocks) {
             for (uint32_t i = 0; i < blocks.Size(); ++i) {
                 auto item = blocks.GetObjectAt(i);
                 auto box = item.GetNamedArray(L"box_2d", nullptr);
-                auto translation = std::wstring{ item.GetNamedString(L"translation", L"") };
-                if (!box || box.Size() < 4 || translation.empty()) continue;
-                TranslationBlock block;
-                block.ymin = std::clamp((int)std::lround(box.GetNumberAt(0)), 0, 1000);
-                block.xmin = std::clamp((int)std::lround(box.GetNumberAt(1)), 0, 1000);
-                block.ymax = std::clamp((int)std::lround(box.GetNumberAt(2)), 0, 1000);
-                block.xmax = std::clamp((int)std::lround(box.GetNumberAt(3)), 0, 1000);
-                if (block.ymax <= block.ymin || block.xmax <= block.xmin) continue;
-                block.translation = std::move(translation);
-                out.blocks.push_back(std::move(block));
+                auto tr = std::wstring{ item.GetNamedString(L"translation", L"") };
+                TranslationBlock b;
+                if (tr.empty() || !readBox(box, b.ymin, b.xmin, b.ymax, b.xmax)) continue;
+                b.translation = std::move(tr); out.blocks.push_back(std::move(b));
             }
         }
-
         if (out.translatedText.empty() && !out.blocks.empty()) {
-            for (auto& b : out.blocks) {
-                if (!out.translatedText.empty()) out.translatedText += L"\r\n";
-                out.translatedText += b.translation;
+            for (auto& b : out.blocks) { if (!out.translatedText.empty()) out.translatedText += L"\r\n"; out.translatedText += b.translation; }
+        }
+        if (out.translatedText.empty()) { out.error = L"Gemini 没有识别到可翻译文字。"; return out; }
+        out.ok = true; return out;
+    }
+
+    inline TranslationResult translateOcrBlocks(const std::vector<OcrBlock>& sourceBlocks,
+        const std::wstring& apiKey, const std::wstring& model,
+        const std::wstring& targetLanguage = L"Simplified Chinese")
+    {
+        TranslationResult out;
+        if (sourceBlocks.empty()) { out.error = L"没有可翻译的 OCR 文字块。"; return out; }
+        JsonArray src;
+        for (uint32_t i = 0; i < sourceBlocks.size(); ++i) {
+            JsonObject item;
+            item.SetNamedValue(L"id", JsonValue::CreateNumberValue(i));
+            item.SetNamedValue(L"text", JsonValue::CreateStringValue(sourceBlocks[i].source));
+            src.Append(item);
+        }
+        const auto modelId = model.empty() ? std::wstring(L"gemini-3.7-flash") : model;
+        std::wstring prompt = L"Translate the following OCR blocks into " + targetLanguage +
+            L". Return one item for every id, preserving id. Keep UI text concise. No commentary. Source blocks JSON: " +
+            std::wstring{ src.Stringify().c_str() };
+        auto req = makeBaseRequest(modelId, prompt, nullptr, makeTextTranslationSchema(), 8192);
+        auto http = postGenerate(apiKey, modelId, req.Stringify().c_str());
+        if (!http.error.empty()) { out.error = http.error; return out; }
+        if (http.status < 200 || http.status >= 300) {
+            out.error = std::format(L"Gemini 翻译失败（HTTP {}）：{}", http.status, getApiError(http.body)); return out;
+        }
+        auto text = extractGenerateText(http.body);
+        JsonObject payload{ nullptr };
+        if (text.empty() || !JsonObject::TryParse(text, payload)) { out.error = L"Gemini 翻译返回格式无法解析。"; return out; }
+        out.translatedText = std::wstring{ payload.GetNamedString(L"translated_text", L"") };
+        auto items = payload.GetNamedArray(L"items", nullptr);
+        if (items) {
+            for (uint32_t i = 0; i < items.Size(); ++i) {
+                auto item = items.GetObjectAt(i);
+                int id = (int)std::lround(item.GetNamedNumber(L"id", -1));
+                auto tr = std::wstring{ item.GetNamedString(L"translation", L"") };
+                if (id < 0 || id >= (int)sourceBlocks.size() || tr.empty()) continue;
+                TranslationBlock b;
+                b.ymin = sourceBlocks[id].ymin; b.xmin = sourceBlocks[id].xmin;
+                b.ymax = sourceBlocks[id].ymax; b.xmax = sourceBlocks[id].xmax;
+                b.translation = std::move(tr); out.blocks.push_back(std::move(b));
             }
         }
-        if (out.translatedText.empty()) {
-            out.error = L"Gemini 没有识别到可翻译的文字。";
-            return out;
+        if (out.translatedText.empty() && !out.blocks.empty()) {
+            for (auto& b : out.blocks) { if (!out.translatedText.empty()) out.translatedText += L"\r\n"; out.translatedText += b.translation; }
         }
-        out.ok = true;
-        return out;
+        if (out.translatedText.empty()) { out.error = L"Gemini 没有返回译文。"; return out; }
+        out.ok = true; return out;
     }
 }
