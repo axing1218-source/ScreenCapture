@@ -37,8 +37,10 @@ Turn the xland/ScreenCapture fork into a portable WeChat-like Windows screenshot
 - Use the model's low-latency supported thinking configuration rather than unsupported `minimal` settings.
 - Use medium vision resolution for normal desktop screenshots; do not send high-resolution vision data unless recognition quality requires it.
 - The Settings “Test connection” action must use the model metadata endpoint rather than running inference merely to generate `OK`.
+- The connection test and real inference must use the same WinHTTP routing policy; avoid adding a separate proxy path unless a reproducible network failure proves it is needed.
 - Real OCR/translation requests use a longer receive ceiling than the connection test; a slow model response must not be confused with a proxy failure.
 - Error text should distinguish request-send failure from waiting-for-model-response timeout and include elapsed milliseconds where useful.
+- Do not infer “proxy failure” from Windows 12002 alone; it only establishes that a WinHTTP stage timed out.
 - Network calls remain off the UI thread.
 
 ## Translation rendering: WeChat-like direction
@@ -76,6 +78,7 @@ Each asynchronous Gemini request records the revision it started from. A complet
 - Copy copies the currently selected mode, not a hidden stale buffer.
 - Panel mouse input must be consumed before capture hit-testing.
 - Gemini failure must not discard already available Windows/local OCR text.
+- Closing the side panel must return keyboard focus to the capture surface without cancelling or moving the active selection.
 
 ## Long screenshot rules
 - Preserve original stitched pixels and save losslessly as PNG.
@@ -90,12 +93,21 @@ Each asynchronous Gemini request records the revision it started from. A complet
 - Empty/invalid structured response: keep original image and any available OCR result, allow Retry.
 - Stale asynchronous response: discard it based on revision mismatch.
 
+## Acceptance tests for the current baseline
+1. **Settings connectivity:** `Test connection` returns model metadata plus elapsed milliseconds without invoking model inference.
+2. **Real translation timing:** `Screenshot → Translate` reports enough timing detail to distinguish PNG encode, send/wait, parse, and render costs.
+3. **Local toggle:** after one successful translation, repeated Original/Translation switches perform no new network request and appear immediate.
+4. **Selection safety:** moving/resizing the selection during an in-flight request prevents the old result from being painted.
+5. **Panel isolation:** selecting/copying OCR text never moves or resizes the screenshot selection.
+6. **Failure fallback:** Gemini failure leaves the original screenshot and any local OCR result intact.
+7. **Windows 10 smoke test:** verify the above on Windows 10 22H2 before introducing more rendering complexity.
+
 ## Implementation order from v0.8.3
 1. **Stabilize connectivity diagnostics.** Validate metadata connection test and real inference timing on Windows 10 22H2.
 2. **Move Gemini production parameters into `GeminiClient.h`.** Remove CI-only behavior patches so local builds and CI builds execute the same code.
-3. **Refine local translation rendering to R2.** Border/background sampling, better foreground color, adaptive font fitting, and left/center alignment selection.
-4. **Finish revision-based invalidation.** Apply the same rule to toolbar translation, OCR result window, long capture, and selection edits.
-5. **Add lightweight timing telemetry in UI.** PNG encoding, request construction, send/wait, parse, and render timings; do not transmit telemetry externally.
+3. **Finish revision-based invalidation.** Apply the same rule to toolbar translation, OCR result window, long capture, and selection edits before adding more visual complexity.
+4. **Add lightweight timing telemetry in UI.** PNG encoding, request construction, send/wait, parse, and render timings; do not transmit telemetry externally.
+5. **Refine local translation rendering to R2.** Border/background sampling, better foreground color, adaptive font fitting, and left/center alignment selection.
 6. **Long-screenshot Gemini tiling.** Overlapping tiles with coordinate remapping and deduplication.
 7. **Snipaste-style annotation refinement.** Tool toggling, secondary controls, width/color/fill/opacity, mosaic/text behavior, undo/redo consistency.
 8. **Windows 10/11 smoke-test pass and packaging.** Single portable executable, no localhost dependency.
