@@ -13,31 +13,22 @@ using namespace Microsoft::WRL;
 namespace {
     constexpr UINT scrollMsgId = 18;
     constexpr UINT scrollEndMsgId = 19;
-    constexpr int comparisonH = 100;  // 匹配比较用的条带高度
-    // 连续这么多次滚不动才认为到底了。以前是 2 次，反馈里有明明还能滚就提示触底的：
-    // 滚轮发出去之后目标窗口不一定跟着动 —— 惯性滚动还没停、页面在加载、
-    // 或者鼠标底下那一层刚好不接收滚轮，多试几次就过去了。
-    // 每次重试之间隔 500ms，多等几轮的代价只是到底时晚几秒出提示
+    constexpr UINT manualCaptureMsgId = 20;
+    constexpr int comparisonH = 100;
     constexpr int maxDismissTime = 8;
-    // 滚轮发出去之后等多久再抓屏：太短会抓到滚动动画还没走完（甚至还没开始）的
-    // 中间帧，滚动量被误判成 0，导致最后一截内容没接上、成图偏短。
-    // 浏览器 / Electron 这类目标是动画式滚动，要给它留足时间
     constexpr int scrollSettleMs = 250;
-    // 抓到"帧在变但匹配不出滚动量"的帧时，多半是滚动动画还没停。此时先不急着发
-    // 下一次滚轮，隔一会儿重新抓一帧等它停稳；最多连续等这么多次，避免一直卡住
     constexpr int settleRecheckMs = 250;
     constexpr int maxSettleRecheck = 2;
-    // 底部条带兜底匹配的置信度门槛
-    constexpr double bottomMatchMinRatio = 0.9;   // 最佳误差要低于 s=0 误差的这个比例才采信
-    constexpr double bottomMatchMaxError = 40000; // 平均每像素灰度误差超过这个值视为根本没对上
+    constexpr int manualPollMs = 120;
+    constexpr double bottomMatchMinRatio = 0.9;
+    constexpr double bottomMatchMaxError = 40000;
 
-    // 将 BGRA 像素条带转为灰度图
     std::vector<BYTE> toGrayscale(const BYTE* bgra, int width, int height, int stride)
     {
-        std::vector<BYTE> gray(width * height);
+        std::vector<BYTE> gray((size_t)width * height);
         for (int y = 0; y < height; y++) {
-            const BYTE* src = bgra + y * stride;
-            BYTE* dst = gray.data() + y * width;
+            const BYTE* src = bgra + (size_t)y * stride;
+            BYTE* dst = gray.data() + (size_t)y * width;
             for (int x = 0; x < width; x++) {
                 dst[x] = (BYTE)((src[x * 4] * 114 + src[x * 4 + 1] * 587 + src[x * 4 + 2] * 299) / 1000);
             }
@@ -45,10 +36,6 @@ namespace {
         return gray;
     }
 
-    // 在 gray1 中搜索与 gray2 最相似的偏移 y（MSE 匹配）
-    // 用平均误差而非累积误差，避免比较行数不同时 y=0 占便宜：
-    // 累积 SSD 在 y=0 比较 100 行、y=15 比较 85 行，前者"容错空间"大，
-    // 当滚动量小且内容有平滑区域时，y=0 的总误差反而更低，导致误判为"没滚动"。
     int findMostSimilarY(const BYTE* gray1, int gray1H, const BYTE* gray2, int gray2H, int width)
     {
         int searchH = gray1H - gray2H + 1;
@@ -58,8 +45,8 @@ namespace {
         for (int y = 0; y < searchH; y++) {
             double error = 0.0;
             for (int row = 0; row < gray2H; row++) {
-                const BYTE* row1 = gray1 + (y + row) * width;
-                const BYTE* row2 = gray2 + row * width;
+                const BYTE* row1 = gray1 + (size_t)(y + row) * width;
+                const BYTE* row2 = gray2 + (size_t)row * width;
                 for (int x = 0; x < width; x++) {
                     int diff = (int)row1[x] - (int)row2[x];
                     error += diff * diff;
@@ -74,24 +61,19 @@ namespace {
         return bestY;
     }
 
-    // 判断两帧是否完全相同（内存比较，快）
     bool framesDiffer(const std::vector<BYTE>& a, const std::vector<BYTE>& b)
     {
         if (a.size() != b.size()) return true;
         return memcmp(a.data(), b.data(), a.size()) != 0;
     }
 
-    // 用新旧两帧"底部条带"反推滚动量：滚动 s 像素后，新帧底部条带的前 stripH-s 行
-    // 还是旧帧底部条带里的内容（整体上移了 s 行），最后 s 行才是新滚进来的内容。
-    // 顶部条带是纯色/空白、常规匹配不上时用它兜底 —— 页面底部的真实内容往往在这里。
-    // 返回滚动量 s；0 表示没对上（比如整条都是新内容，或条带太"平"匹配不可信）。
     int findScrollByBottomStrip(const BYTE* grayOld, const BYTE* grayNew, int width, int stripH)
     {
         double minAvgError = DBL_MAX;
         double avgAtZero = DBL_MAX;
         int bestS = 0;
         for (int s = 0; s < stripH; s++) {
-            int rows = stripH - s; // 条带里还能和旧帧对上的行数
+            int rows = stripH - s;
             double error = 0.0;
             for (int r = 0; r < rows; r++) {
                 const BYTE* row1 = grayOld + (size_t)(s + r) * width;
@@ -109,8 +91,6 @@ namespace {
             }
         }
         if (bestS <= 0) return 0;
-        // 纯色/空白时所有偏移的误差都差不多（严格小于比较会让 bestS 停在 0），
-        // 这里再兜一道：最佳误差必须明显小于 s=0，且绝对误差不能太大
         if (minAvgError >= avgAtZero * bottomMatchMinRatio) return 0;
         if (minAvgError > bottomMatchMaxError) return 0;
         return bestS;
@@ -119,17 +99,17 @@ namespace {
 
 CapLong::CapLong(WinCap* win) : win(win)
 {
-    startCircleR *= win->dpi;
     auto d2d = Ling::D2D::get();
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), textBrush.GetAddressOf());
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x000000, 0.68f), bgBrush.GetAddressOf());
-    auto size{ startCircleR * 2 };
-    layoutTextStart = Ling::D2D::get()->makeTextLayout(Lang::get(L"long.start"), 16 * win->dpi, size, size);
-    if (layoutTextStart) {
-        DWRITE_TEXT_METRICS tm{};
-        layoutTextStart->GetMetrics(&tm);
-        startTextSize = { tm.width, tm.height };
-    }
+
+    // Clicking "long screenshot" now starts immediately. The selected area becomes a hole so the
+    // underlying app receives the user's wheel gestures; we poll the pixels and stitch only when
+    // the user actually scrolls. Automatic scrolling remains an optional toolbar action.
+    isCapturing = true;
+    win->hollowWin();
+    makeTool();
+    firstStep();
 }
 
 CapLong::~CapLong()
@@ -140,89 +120,62 @@ void CapLong::dispose()
 {
     win->killTimer(scrollMsgId);
     win->killTimer(scrollEndMsgId);
+    win->killTimer(manualCaptureMsgId);
     if (tool) tool->close();
 }
 
 void CapLong::paint(ID2D1DeviceContext* ctx)
 {
     paintImgPreview(ctx);
-    if (isFinish) {
+    if (isFinish && layoutTextEnd) {
         auto borderRadius{ 4.f * win->dpi };
         ctx->FillRoundedRectangle(D2D1::RoundedRect(stopTextRect, borderRadius, borderRadius), bgBrush.Get());
         ctx->DrawTextLayout(stopTextPos, layoutTextEnd.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
-    }
-    else if (isShowStartBtn) {
-        ctx->FillEllipse(D2D1::Ellipse(D2D1::Point2F((float)circleCenter.x, (float)circleCenter.y), startCircleR, startCircleR), bgBrush.Get());
-        ctx->DrawTextLayout({ circleCenter.x - startTextSize.width / 2, circleCenter.y - startTextSize.height / 2 },
-            layoutTextStart.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
     }
 }
 
 void CapLong::setCursor()
 {
-    if (!isFinish && isShowStartBtn) {
-        // 开始按钮跟着光标走，藏掉系统光标免得两个东西叠在一起
-        SetCursor(NULL);
-    }
-    else {
-        SetCursor(LoadCursor(nullptr, IDC_ARROW));
-    }
+    SetCursor(LoadCursor(nullptr, IDC_ARROW));
 }
 
-void CapLong::onMove(POINT pos)
+void CapLong::onMove(POINT)
 {
-    if (isFinish) {
-        if (isShowStartBtn) {
-            isShowStartBtn = false;
-            win->refresh();
-        }
-        return;
-    }
-    circleCenter = pos;
-    auto& r = win->cutMask->maskRect;
-    if (pos.x > r.left && pos.x < r.right && pos.y > r.top && pos.y < r.bottom) {
-        isShowStartBtn = true;
-        win->refresh();
-    }
-    else {
-        if (isShowStartBtn) {
-            isShowStartBtn = false;
-            win->refresh();
-        }
-    }
 }
 
-void CapLong::onUp(POINT pos)
+void CapLong::onUp(POINT)
 {
-    if (isScrolling || isFinish) return;
-    if (isShowStartBtn) { //按下开始按钮
-        isScrolling = true;
-        win->hollowWin();
-        makeTool();
-        firstStep(); //首次截图
-    }
+}
+
+void CapLong::scheduleNextCapture(int delayMs)
+{
+    if (!isCapturing || isFinish || autoScroll) return;
+    win->setTimer(delayMs, manualCaptureMsgId);
 }
 
 void CapLong::onTimerCB(UINT timerId)
 {
-    if (timerId == scrollMsgId) {
-        POINT pt;
-        GetCursorPos(&pt);
-        auto tarHwnd = WindowFromPoint(pt);
-        if (targetHwnd == nullptr) {
-            targetHwnd = tarHwnd;
-        }
-        if (tarHwnd != targetHwnd) return; //鼠标没在截屏区域直接退出，定时器仍在检查
+    if (timerId == manualCaptureMsgId) {
+        win->killTimer(manualCaptureMsgId);
+        if (!isCapturing || isFinish || autoScroll) return;
+        // The first timer tick happens after CapLong has been assigned into WinCap, so this also
+        // makes the initial preview visible even though firstStep ran inside the constructor.
+        win->refresh();
+        capStep();
+    }
+    else if (timerId == scrollMsgId) {
         win->killTimer(scrollMsgId);
-        INPUT input = { 0 };
+        if (!isCapturing || isFinish || !autoScroll) return;
+        INPUT input{};
         input.type = INPUT_MOUSE;
         input.mi.dwFlags = MOUSEEVENTF_WHEEL;
         input.mi.mouseData = -WHEEL_DELTA;
         SendInput(1, &input, sizeof(INPUT));
-        win->setTimer(scrollSettleMs, scrollEndMsgId); //滚动开始
+        win->setTimer(scrollSettleMs, scrollEndMsgId);
     }
-    else if (scrollEndMsgId == timerId) {
-        win->killTimer(scrollEndMsgId); //滚动完成
+    else if (timerId == scrollEndMsgId) {
+        win->killTimer(scrollEndMsgId);
+        if (!isCapturing || isFinish) return;
         capStep();
     }
 }
@@ -239,122 +192,159 @@ void CapLong::firstStep()
     imgData = Util::captureScreen(capStartPos.x, capStartPos.y, imgW, imgH);
     img1 = imgData;
     makeImgPreview();
-    win->refresh();
-    win->setTimer(88, scrollMsgId); //准备滚动
+    scheduleNextCapture(manualPollMs);
 }
 
 void CapLong::makeImgPreview()
 {
     imgPreview.Reset();
+    if (imgW <= 0 || resultH <= 0 || imgData.empty()) return;
     float previewScaleW = tool ? (float)tool->w / (float)imgW : 1.0f;
     int previewW = (int)((float)imgW * previewScaleW);
     int previewH = (int)((float)resultH * previewScaleW);
-    if (previewW > 0 && previewH > 0) {
-        std::vector<BYTE> scaledData((size_t)previewW * 4 * previewH);
-        for (int y = 0; y < previewH; y++) {
-            int srcY = (int)((float)y / previewScaleW);
-            if (srcY >= resultH) srcY = resultH - 1;
-            for (int x = 0; x < previewW; x++) {
-                int srcX = (int)((float)x / previewScaleW);
-                if (srcX >= imgW) srcX = imgW - 1;
-                int srcIdx = (srcY * imgW + srcX) * 4;
-                int dstIdx = (y * previewW + x) * 4;
-                scaledData[dstIdx] = imgData[srcIdx];
-                scaledData[dstIdx + 1] = imgData[srcIdx + 1];
-                scaledData[dstIdx + 2] = imgData[srcIdx + 2];
-                scaledData[dstIdx + 3] = imgData[srcIdx + 3];
-            }
+    if (previewW <= 0 || previewH <= 0) return;
+
+    std::vector<BYTE> scaledData((size_t)previewW * 4 * previewH);
+    for (int y = 0; y < previewH; y++) {
+        int srcY = (int)((float)y / previewScaleW);
+        if (srcY >= resultH) srcY = resultH - 1;
+        for (int x = 0; x < previewW; x++) {
+            int srcX = (int)((float)x / previewScaleW);
+            if (srcX >= imgW) srcX = imgW - 1;
+            int srcIdx = (srcY * imgW + srcX) * 4;
+            int dstIdx = (y * previewW + x) * 4;
+            scaledData[dstIdx] = imgData[srcIdx];
+            scaledData[dstIdx + 1] = imgData[srcIdx + 1];
+            scaledData[dstIdx + 2] = imgData[srcIdx + 2];
+            scaledData[dstIdx + 3] = imgData[srcIdx + 3];
         }
-        D2D1_BITMAP_PROPERTIES1 props = {
-            .pixelFormat{D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)},
-            .dpiX{96.0f}, .dpiY{96.0f}, .bitmapOptions{D2D1_BITMAP_OPTIONS_NONE}
-        };
-        Ling::D2D::get()->deviceContext->CreateBitmap(D2D1::SizeU(previewW, previewH), scaledData.data(), previewW * 4, props, imgPreview.GetAddressOf());
     }
+    D2D1_BITMAP_PROPERTIES1 props = {
+        .pixelFormat{D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)},
+        .dpiX{96.0f}, .dpiY{96.0f}, .bitmapOptions{D2D1_BITMAP_OPTIONS_NONE}
+    };
+    Ling::D2D::get()->deviceContext->CreateBitmap(D2D1::SizeU(previewW, previewH), scaledData.data(), previewW * 4, props, imgPreview.GetAddressOf());
 }
 
 void CapLong::capStep()
 {
     auto data = Util::captureScreen(capStartPos.x, capStartPos.y, imgW, imgH);
-    // 检测滚动区域：首次时找出前后两帧的像素差异边界
+    if (data.empty()) {
+        if (autoScroll) win->setTimer(500, scrollMsgId);
+        else scheduleNextCapture(manualPollMs);
+        return;
+    }
+
     if (firstCheck) {
         changeStartY = -1;
         for (int y = 0; y < imgH; y++) {
             for (int x = 0; x < imgW; x++) {
                 int idx = (y * imgW + x) * 4;
                 if (img1[idx] != data[idx] || img1[idx + 1] != data[idx + 1] || img1[idx + 2] != data[idx + 2]) {
-                    if (changeStartY == -1) changeStartY = y;
+                    changeStartY = y;
                     break;
                 }
             }
             if (changeStartY != -1) break;
         }
         if (changeStartY == -1) {
-            // 没有检测到变化，可能滚动未生效
-            dismissTime++;
-            if (dismissTime > maxDismissTime) { stopCap(); return; }
-            win->setTimer(500, scrollMsgId);
+            if (autoScroll) {
+                if (++dismissTime > maxDismissTime) { stopCap(); return; }
+                win->setTimer(500, scrollMsgId);
+            }
+            else {
+                scheduleNextCapture(manualPollMs);
+            }
             return;
         }
         firstCheck = false;
     }
+
     int rowPix{ imgW * 4 };
-    // 从 changeStartY 开始，裁剪用于匹配的条带
     int stripH = std::min(comparisonH, imgH - changeStartY);
-    if (stripH <= 0) { win->setTimer(500, scrollMsgId); return; }
-    int img1StripH = imgH - changeStartY;
-    auto gray1 = toGrayscale(img1.data() + changeStartY * rowPix, imgW, img1StripH, rowPix);
-    auto gray2 = toGrayscale(data.data() + changeStartY * rowPix, imgW, stripH, rowPix);
-    int y = findMostSimilarY(gray1.data(), img1StripH, gray2.data(), stripH, imgW);
-    if (y == 0) {
-        // 顶部条带没对上：可能滚动区域顶部是纯色/空白（比如页面底部的留白），
-        // 换用新帧底部的条带再反推一次滚动量
-        auto gray1Bottom = toGrayscale(img1.data() + (imgH - stripH) * rowPix, imgW, stripH, rowPix);
-        auto gray2Bottom = toGrayscale(data.data() + (imgH - stripH) * rowPix, imgW, stripH, rowPix);
-        y = findScrollByBottomStrip(gray1Bottom.data(), gray2Bottom.data(), imgW, stripH);
-    }
-    if (y == 0) { // 未检测到滚动
-        if (framesDiffer(data, img1)) {
-            // 帧在变但匹配不出滚动量：多半是滚动动画还没停、或页面还在加载。
-            // 这时不急着判"滚不动"，隔一会儿重抓一帧等它停稳，最多等几次再放弃
-            if (settleRecheckCount < maxSettleRecheck) {
-                settleRecheckCount++;
-                win->setTimer(settleRecheckMs, scrollEndMsgId);
-                return;
-            }
-        }
-        settleRecheckCount = 0;
-        dismissTime++;
-        if (dismissTime > maxDismissTime) { stopCap(); return; }
-        win->setTimer(500, scrollMsgId);
+    if (stripH <= 0) {
+        if (autoScroll) win->setTimer(500, scrollMsgId);
+        else scheduleNextCapture(manualPollMs);
         return;
     }
+
+    int img1StripH = imgH - changeStartY;
+    auto gray1 = toGrayscale(img1.data() + (size_t)changeStartY * rowPix, imgW, img1StripH, rowPix);
+    auto gray2 = toGrayscale(data.data() + (size_t)changeStartY * rowPix, imgW, stripH, rowPix);
+    int y = findMostSimilarY(gray1.data(), img1StripH, gray2.data(), stripH, imgW);
+    if (y == 0) {
+        auto gray1Bottom = toGrayscale(img1.data() + (size_t)(imgH - stripH) * rowPix, imgW, stripH, rowPix);
+        auto gray2Bottom = toGrayscale(data.data() + (size_t)(imgH - stripH) * rowPix, imgW, stripH, rowPix);
+        y = findScrollByBottomStrip(gray1Bottom.data(), gray2Bottom.data(), imgW, stripH);
+    }
+
+    if (y == 0) {
+        if (framesDiffer(data, img1) && settleRecheckCount < maxSettleRecheck) {
+            settleRecheckCount++;
+            if (autoScroll) win->setTimer(settleRecheckMs, scrollEndMsgId);
+            else scheduleNextCapture(settleRecheckMs);
+            return;
+        }
+        settleRecheckCount = 0;
+        if (autoScroll) {
+            if (++dismissTime > maxDismissTime) { stopCap(); return; }
+            win->setTimer(500, scrollMsgId);
+        }
+        else {
+            // Manual mode never decides that the user is "done" merely because they paused.
+            scheduleNextCapture(manualPollMs);
+        }
+        return;
+    }
+
     dismissTime = 0;
     settleRecheckCount = 0;
-    // 计算拼接位置
     int paintStart = resultH - (imgH - y - changeStartY);
     int newResultH = paintStart + (imgH - changeStartY);
-    // 创建新的结果图像
+    if (paintStart < 0 || newResultH <= 0) {
+        if (autoScroll) win->setTimer(500, scrollMsgId);
+        else scheduleNextCapture(manualPollMs);
+        return;
+    }
+
     std::vector<BYTE> newResult((size_t)rowPix * newResultH);
-    // 拷贝旧结果
     CopyMemory(newResult.data(), imgData.data(), imgData.size());
-    // 拷贝新截图从 changeStartY 到底部的内容
     for (int row = 0; row < imgH - changeStartY; row++) {
-        CopyMemory(newResult.data() + (size_t)(paintStart + row) * rowPix, data.data() + (size_t)(changeStartY + row) * rowPix, rowPix);
+        CopyMemory(newResult.data() + (size_t)(paintStart + row) * rowPix,
+            data.data() + (size_t)(changeStartY + row) * rowPix, rowPix);
     }
     imgData = std::move(newResult);
-    img1 = data;
+    img1 = std::move(data);
     resultH = newResultH;
+
     if (resultH > 36000) { stopCap(); return; }
     makeImgPreview();
     win->refresh();
-    win->setTimer(500, scrollMsgId); //准备下次滚动
+    if (autoScroll) win->setTimer(500, scrollMsgId);
+    else scheduleNextCapture(manualPollMs);
+}
+
+void CapLong::startAutoScroll()
+{
+    if (!isCapturing || isFinish || autoScroll) return;
+    autoScroll = true;
+    dismissTime = 0;
+    settleRecheckCount = 0;
+    win->killTimer(manualCaptureMsgId);
+
+    // Put the pointer over the selected live area so SendInput(WHEEL) is delivered to the page,
+    // not to the toolbar button the user just clicked.
+    auto& r = win->cutMask->maskRect;
+    POINT center{ (LONG)((r.left + r.right) / 2.f), (LONG)((r.top + r.bottom) / 2.f) };
+    ClientToScreen(win->hwnd, &center);
+    SetCursorPos(center.x, center.y);
+    targetHwnd = WindowFromPoint(center);
+    win->setTimer(80, scrollMsgId);
 }
 
 void CapLong::makeTool()
 {
-    tool = std::make_unique<ToolLong>(win);
-    // 尺寸在 ToolLong 构造里算好了，这里只定位；两者都要在建窗口之前设好
+    tool = std::make_unique<ToolLong>(win, this);
     layoutTool();
     tool->createNativeWindow(WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, WS_POPUP);
 }
@@ -362,7 +352,6 @@ void CapLong::makeTool()
 void CapLong::layoutTool()
 {
     if (!tool) return;
-    // 宽高一律现问 tool 要，不再按 dpi 自己算：DPI 变化后工具条会重算尺寸再回头调这里
     auto toolW{ tool->w };
     POINT pos{ 0,0 };
     auto& cutMask = win->cutMask;
@@ -392,11 +381,13 @@ void CapLong::paintImgPreview(ID2D1DeviceContext* ctx)
 void CapLong::stopCap()
 {
     isFinish = true;
+    isCapturing = false;
+    autoScroll = false;
     makeStopText();
     win->restoreWin();
-    isScrolling = false;
     win->killTimer(scrollMsgId);
     win->killTimer(scrollEndMsgId);
+    win->killTimer(manualCaptureMsgId);
     win->refresh();
 }
 
@@ -409,7 +400,7 @@ void CapLong::makeStopText()
         layoutTextEnd = Ling::D2D::get()->makeTextLayout(Lang::get(L"long.reachedBottom"), 13 * win->dpi);
     }
     if (!layoutTextEnd) return;
-    DWRITE_TEXT_METRICS tm = {};
+    DWRITE_TEXT_METRICS tm{};
     layoutTextEnd->GetMetrics(&tm);
     auto& maskRect = win->cutMask->maskRect;
     auto halfX = maskRect.left + (maskRect.right - maskRect.left) / 2;
@@ -421,7 +412,6 @@ void CapLong::makeStopText()
     stopTextRect.bottom = maskRect.bottom - padding;
     layoutTextEnd->SetMaxWidth(stopTextRect.right - stopTextRect.left);
     layoutTextEnd->SetMaxHeight(stopTextRect.bottom - stopTextRect.top);
-    // 圆角矩形是按文本宽度加 padding 撑出来的，文本本身要摆回它的正中
     stopTextPos = { halfX - halfW, stopTextRect.top + (stopTextRect.bottom - stopTextRect.top - tm.height) / 2 };
 }
 
@@ -442,7 +432,6 @@ bool CapLong::saveToFile()
 void CapLong::pin()
 {
     if (imgData.empty()) return;
-    // 居中放置在主显示器
     auto monitor = MonitorFromPoint({ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
     MONITORINFO mi{ sizeof(MONITORINFO) };
     GetMonitorInfo(monitor, &mi);
