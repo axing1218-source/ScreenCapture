@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - weshot-v0.1
+      - weshot-v0.8.1-fix
 
 jobs:
   build:
@@ -57,6 +58,16 @@ jobs:
           $proj = $proj.Replace('D:\sdk\gifski;', '')
           $proj = $proj.Replace(';D:\sdk\gifski\target\release\gifski.lib', '')
           Set-Content Src\ScreenCapture.vcxproj $proj -Encoding utf8
+
+      - name: Patch Gemini 3.7 Flash thinking level
+        shell: pwsh
+        run: |
+          $gemini = Get-Content Src\GeminiClient.h -Raw
+          # Gemini 3.7 Flash does not support minimal. Use low, its fastest supported level.
+          $old = 'model.find(L"flash") != std::wstring::npos ? L"minimal" : L"low"'
+          if (-not $gemini.Contains($old)) { throw 'Expected Gemini thinking configuration was not found.' }
+          $gemini = $gemini.Replace($old, 'L"low"')
+          Set-Content Src\GeminiClient.h $gemini -Encoding utf8
 
       - name: Build ScreenCapture
         shell: pwsh
