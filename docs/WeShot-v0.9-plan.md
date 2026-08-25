@@ -9,6 +9,7 @@
 - First `Translate` click sends the selected screenshot to Gemini once, receives translated text plus normalized text boxes, and draws the translated overlay locally.
 - Later clicks only toggle the local original/translated rendering. They must not call Gemini again.
 - If the selection rectangle changes after a translation result exists, invalidate that cached translation before allowing another toggle.
+- If the selection changes while a Gemini request is still in flight, validate the current rectangle again when the result is delivered and discard stale results instead of painting them over the new selection. Implemented in `Src/WeShotCaptureTranslate.h`.
 
 ### OCR result window
 - With a saved Gemini API key, Gemini is the primary OCR engine. Windows OCR is only the no-key fallback.
@@ -27,23 +28,23 @@ For `gemini-3.7-flash`:
 
 ## Source/build cleanup
 
-The current latency-compatible test build applies `low` thinking and medium image resolution in CI. Move these settings into `Src/GeminiClient.h`, then remove the CI source patch so local builds and CI builds behave identically.
+The current latency-compatible test build still applies `low` thinking and medium image resolution in CI. `Src/GeminiClient.h` must be updated next so local builds and CI builds behave identically, after which the CI source patch can be removed.
 
-After migration, add a CI sanity check that rejects `thinkingLevel=minimal` when the configured model is `gemini-3.7-flash`.
+CI now contains explicit sanity checks that fail the build if the `minimal` branch survives or if `low` thinking / medium media resolution are missing after the compatibility patch. This prevents publishing a misleading test executable with invalid Gemini 3.7 parameters.
 
 ## Next implementation order
 
 1. Move Gemini 3.7 tuning from CI patch into source and remove the patch.
-2. Add translation-cache invalidation when the selected rectangle changes.
-3. Add elapsed-time status text for first OCR/translation request to make latency measurable in user testing.
-4. If upload time remains dominant, downscale oversized screenshots before API upload while preserving normalized box coordinates.
-5. Only after latency and interaction are stable, improve translated-overlay background cleanup/font fitting.
+2. Add elapsed-time status text for first OCR/translation request to make latency measurable in user testing.
+3. If upload time remains dominant, downscale oversized screenshots before API upload while preserving normalized box coordinates.
+4. Only after latency and interaction are stable, improve translated-overlay background cleanup/font fitting.
 
 ## Acceptance tests
 
 - Capture -> Translate: no new window; translated overlay appears in-place.
 - Translate -> Original -> Translate: subsequent switching is immediate and offline.
-- Resize/move selection after translation: old translation is not reused.
+- Resize/move selection after translation: old cached translation is not reused.
+- Resize/move selection while translation is still running: stale asynchronous result is discarded.
 - OCR with API key: Gemini OCR result appears in the right panel.
 - OCR -> Translation -> Original -> Translation: left image and right text switch together.
 - OCR translation after Gemini OCR: no second image upload.
