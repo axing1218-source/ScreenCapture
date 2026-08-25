@@ -130,6 +130,13 @@ The toolbar and OCR result window are views over this cache. Neither owns the ca
 - Ctrl+C targets panel text only when the panel/text control owns focus; otherwise existing screenshot copy behavior is preserved.
 - Opening/closing the side panel cannot alter the capture revision because it does not change source pixels.
 
+### Side-panel interaction acceptance details
+- Opening the panel must not reposition the floating toolbar unless the panel would physically overlap it; if repositioning is necessary, only the toolbar moves, never the selection rectangle.
+- The panel may resize vertically with the capture region but should keep a stable readable width; text wrapping belongs to the panel, not the capture surface.
+- Clicking `Original` or `Translation` changes only presentation state. It must not change focus unexpectedly, mutate the capture revision, or retrigger OCR/translation.
+- `Retry` is visible only after a failed Gemini operation and retries the current revision/model/language tuple.
+- Closing the panel preserves cached OCR/translation data for the current revision so reopening is instantaneous.
+
 ## Long screenshot rules
 - Preserve original stitched pixels and save losslessly as PNG.
 - Preview scaling is separate from final output quality.
@@ -199,6 +206,13 @@ Before changing visual rendering further, land the current CI-injected Gemini be
 - after source is updated, delete the workflow-time `Patch Gemini diagnostics` production rewrite and replace it with assertions that fail CI if source regresses.
 
 CI must build production behavior from source; it must not define production behavior.
+
+### Two-step source migration rule
+To keep the next build debuggable, migrate Gemini behavior in two commits rather than one large patch:
+1. **Source parity commit:** copy the already-tested v0.8.3 diagnostics behavior into `GeminiClient.h` without changing UI behavior. This commit should only change model thinking, image resolution, timeouts, connection test, and network-stage diagnostics.
+2. **CI cleanup commit:** remove production-code rewriting from `weshot-build.yml` and leave only source assertions/build checks. The generated EXE before and after this second commit should behave identically.
+
+Do not mix R2 rendering, cache refactors, or panel changes into either migration commit. That keeps any regression attributable to one layer.
 
 ## Current test baseline
 The latest v0.8.3 diagnostic build is the current test baseline. First test Settings → **Test connection**. A successful result should identify the selected model and elapsed milliseconds. Then test **Screenshot → Translate** and record first-response time. After the first translation completes, repeatedly switch Original/Translation; those switches should be immediate and should not send another Gemini request.
