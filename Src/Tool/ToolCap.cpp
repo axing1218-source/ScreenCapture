@@ -2,6 +2,7 @@
 #include "../Win/WinCap.h"
 #include "../Lang.h"
 #include "../Tip.h"
+#include "../WeShotOcr.h"
 #include "ToolCap.h"
 
 ToolCap::ToolCap(WinCap* win) : Ling::WinBase(), win(win)
@@ -83,7 +84,8 @@ void ToolCap::onClick(Ling::Button* btn)
 		win->startVideo();
 	}
 	else if (btn->id == L"ocr") {
-		win->startOcr();
+		// WeShot keeps the capture session alive and opens OCR inside the same screenshot UI.
+		WeShotOcr::show(win);
 	}
 	else if (btn->id == L"qrcode") {
 		win->startQrcode();
