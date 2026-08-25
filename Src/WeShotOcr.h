@@ -13,6 +13,13 @@ namespace WeShotOcr
         return WeShotOcrV2::hasWindow();
     }
 
+    inline void showPixels(std::vector<BYTE> pixels, int width, int height)
+    {
+        // Keep the same repeated-launch protection used by normal screenshot OCR.
+        if (WeShotOcrV2::activeWindow) WeShotOcrV2::activeWindow->close();
+        WeShotOcrV2::showPixels(std::move(pixels), width, height);
+    }
+
     inline void show(WinCap* win)
     {
         // Close an older result window before the new request receives its request id.
