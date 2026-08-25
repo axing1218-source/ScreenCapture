@@ -12,6 +12,8 @@ public:
 	//（浏览器 / Electron 程序认），两份都带 alpha
 	static void saveToClipboard(const int w, const int h, BYTE* data);
 	static bool saveToFile(const std::wstring& path, const int w, const int h, BYTE* data);
+	// 把 BGRA 像素编码为 PNG 字节。Gemini 图片请求直接复用这份无损数据，不落临时文件。
+	static bool encodePngToMemory(const int w, const int h, BYTE* data, std::vector<BYTE>& out);
 	// 弹系统另存为对话框，返回空串表示用户取消
 	static std::wstring getSaveFilePath(HWND hwnd, const std::wstring& ext = L"png");
 	// 以当前时间生成默认文件名，精确到毫秒，避免连续保存时重名
