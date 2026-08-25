@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include <format>
+#include <cfloat>
 #include <winrt/Windows.Data.Json.h>
 #include "Util.h"
 
@@ -56,6 +57,15 @@ namespace WeShotPaddleOcr
     class Engine
     {
     public:
+        ~Engine()
+        {
+            closeHandles();
+            if (job) {
+                CloseHandle(job);
+                job = nullptr;
+            }
+        }
+
         Result recognize(const std::vector<BYTE>& pixels, int width, int height)
         {
             std::scoped_lock lock(mutex);
@@ -281,7 +291,8 @@ namespace WeShotPaddleOcr
             std::string line;
             while (GetTickCount64() < deadline) {
                 const DWORD left = (DWORD)(deadline - GetTickCount64());
-                if (!readLine(line, (std::min)(left, 500u))) {
+                const DWORD waitMs = left < (DWORD)500 ? left : (DWORD)500;
+                if (!readLine(line, waitMs)) {
                     if (process && WaitForSingleObject(process, 0) != WAIT_TIMEOUT) break;
                     continue;
                 }
