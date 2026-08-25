@@ -79,7 +79,7 @@ void WinSettingCommon::initCaptureBorderCtrls()
     borderWidthLabel->setHeight(28.f);
     borderWidthLabel->setAlignItems(Ling::Align::Center);
     borderWidthLabel->setJustifyContent(Ling::Justify::Center);
-    auto current = std::clamp(Setting::get()->getToolNum(L"capture", L"borderWidth", 2.f), 1.f, 8.f);
+    auto current = std::clamp(Setting::get()->getToolNum(L"capture", L"borderWidth", 2.f), 0.f, 8.f);
     borderWidthLabel->setText(std::format(L"{:.0f}px", current));
 
     auto plusBtn = box->makeChild<Ling::Button>();
@@ -91,7 +91,7 @@ void WinSettingCommon::initCaptureBorderCtrls()
 
     auto change = [this](float delta) {
         auto setting = Setting::get();
-        auto value = std::clamp(setting->getToolNum(L"capture", L"borderWidth", 2.f) + delta, 1.f, 8.f);
+        auto value = std::clamp(setting->getToolNum(L"capture", L"borderWidth", 2.f) + delta, 0.f, 8.f);
         value = std::round(value);
         setting->setToolNum(L"capture", L"borderWidth", value);
         if (borderWidthLabel) borderWidthLabel->setText(std::format(L"{:.0f}px", value));
@@ -151,7 +151,8 @@ void WinSettingCommon::setAutoStartBtn(Ling::Button* btn)
         btn->setColor(0x597ef7ff);
         btn->setHoverColor(0x597ef7ff);
     }
-    else {
+    else
+    {
         btn->setText(L"\ue687");
         btn->setColor(0x666666FF);
         btn->setHoverColor(0x666666FF);
