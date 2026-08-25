@@ -63,16 +63,16 @@ jobs:
         run: |
           $gemini = Get-Content Src\GeminiClient.h -Raw
 
-          # Gemini 3.7 Flash supports low/medium/high thinking levels; minimal is rejected.
-          # Use low for screenshot OCR/translation because this path is latency-sensitive.
+          # 3.7 Flash supports low/medium/high; its default is medium. OCR and translation are
+          # latency-sensitive, so force low. Keep the 2.5 thinkingBudget=0 path unchanged.
           $gemini = $gemini.Replace('model.find(L"flash") != std::wstring::npos ? L"minimal" : L"low"', 'L"low"')
 
-          # Explicit medium image resolution avoids the variable/default image token budget while
-          # retaining enough detail for normal desktop UI text. Small-text OCR can be promoted to
-          # high later as a separate accuracy mode if testing shows it is necessary.
+          # Medium image resolution is the intended speed/detail balance for normal desktop UI.
           $needle = 'generation.SetNamedValue(L"maxOutputTokens", JsonValue::CreateNumberValue(maxOutputTokens));'
-          $replacement = $needle + "`r`n        generation.SetNamedValue(L\"mediaResolution\", JsonValue::CreateStringValue(L\"MEDIA_RESOLUTION_MEDIUM\"));"
-          $gemini = $gemini.Replace($needle, $replacement)
+          $insert = '        generation.SetNamedValue(L"mediaResolution", JsonValue::CreateStringValue(L"MEDIA_RESOLUTION_MEDIUM"));'
+          if ($gemini.Contains($needle) -and -not $gemini.Contains('L"mediaResolution"')) {
+            $gemini = $gemini.Replace($needle, $needle + "`r`n" + $insert)
+          }
 
           Set-Content Src\GeminiClient.h $gemini -Encoding utf8
 
