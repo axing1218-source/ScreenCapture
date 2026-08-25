@@ -5,12 +5,11 @@
 #include "WinSettingCommon.h"
 
 WinSettingCommon::WinSettingCommon(Ling::WinBase* parent):Ling::Node(parent)
-{    
+{
     initAutoStartCtrls();
+    initCaptureBorderCtrls();
     initLangCtrls();
     auto weakThis = getWeakThis();
-    // 这个回调一直挂在窗口上，而本节点可能在窗口关闭之前就被菜单切换换掉了，
-    // 所以先确认自己还活着再去碰成员
     win->onDestroy.add([this, weakThis]() {
         if (!weakThis.lock()) return;
         this->hideSelectBox();
@@ -49,6 +48,56 @@ void WinSettingCommon::initAutoStartCtrls()
         setting->setAutoStart(!isAutoStart);
         setAutoStartBtn(btn);
     });
+
+    auto border = makeChild<Ling::Node>();
+    border->setHeight(1.f);
+    border->setBg(0xE0E0E0FF);
+}
+
+void WinSettingCommon::initCaptureBorderCtrls()
+{
+    auto box = makeChild<Ling::Node>();
+    box->setHeight(39.f);
+    box->setFlexDirection(Ling::FlexDirection::Row);
+    box->setAlignItems(Ling::Align::Center);
+
+    auto label = box->makeChild<Ling::Label>();
+    label->setText(L"截图边框粗细");
+    label->setHeightPercent(100.f);
+    label->setJustifyContent(Ling::Justify::Center);
+    label->setFlexGrow(1.f);
+
+    auto minusBtn = box->makeChild<Ling::Button>();
+    minusBtn->setText(L"−");
+    minusBtn->setSize(30.f, 28.f);
+    minusBtn->setFontSize(16.f);
+    minusBtn->setBorder(1.f, 0xE0E0E0FF);
+    minusBtn->setHoverBg(0xF5F5F5FF);
+
+    borderWidthLabel = box->makeChild<Ling::Label>();
+    borderWidthLabel->setWidth(48.f);
+    borderWidthLabel->setHeight(28.f);
+    borderWidthLabel->setAlignItems(Ling::Align::Center);
+    borderWidthLabel->setJustifyContent(Ling::Justify::Center);
+    auto current = std::clamp(Setting::get()->getToolNum(L"capture", L"borderWidth", 2.f), 1.f, 8.f);
+    borderWidthLabel->setText(std::format(L"{:.0f}px", current));
+
+    auto plusBtn = box->makeChild<Ling::Button>();
+    plusBtn->setText(L"+");
+    plusBtn->setSize(30.f, 28.f);
+    plusBtn->setFontSize(16.f);
+    plusBtn->setBorder(1.f, 0xE0E0E0FF);
+    plusBtn->setHoverBg(0xF5F5F5FF);
+
+    auto change = [this](float delta) {
+        auto setting = Setting::get();
+        auto value = std::clamp(setting->getToolNum(L"capture", L"borderWidth", 2.f) + delta, 1.f, 8.f);
+        value = std::round(value);
+        setting->setToolNum(L"capture", L"borderWidth", value);
+        if (borderWidthLabel) borderWidthLabel->setText(std::format(L"{:.0f}px", value));
+    };
+    minusBtn->onClick.add([change](Ling::Button*) { change(-1.f); });
+    plusBtn->onClick.add([change](Ling::Button*) { change(1.f); });
 
     auto border = makeChild<Ling::Node>();
     border->setHeight(1.f);
@@ -145,15 +194,15 @@ void WinSettingCommon::showSelectBox(Ling::Button* btn)
     selectBox->setBorder(1.f, 0x597ef766);
     for (auto& pair:langs)
     {
-        auto btn = selectBox->makeChild<Ling::Button>();
-        btn->setText(pair.first);
-        btn->setHeight(itemH);
-        btn->setWidthPercent(100.f);
-        btn->setHoverBg(0Xf2f2f2FF);
-        btn->setHoverColor(0X000000FF);
-        btn->onClick.add([this](Ling::Button* btn) {
+        auto itemBtn = selectBox->makeChild<Ling::Button>();
+        itemBtn->setText(pair.first);
+        itemBtn->setHeight(itemH);
+        itemBtn->setWidthPercent(100.f);
+        itemBtn->setHoverBg(0Xf2f2f2FF);
+        itemBtn->setHoverColor(0X000000FF);
+        itemBtn->onClick.add([this](Ling::Button* itemBtn) {
             auto lang = Lang::get();
-            auto langName = btn->getText();
+            auto langName = itemBtn->getText();
             auto langs = lang->getSupportedLang();
             for (auto& pair : langs)
             {
