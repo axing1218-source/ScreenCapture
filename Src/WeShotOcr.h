@@ -10,11 +10,6 @@
 #include "Win/WinCap.h"
 #include "Win/CutMask.h"
 
-// WeShot integrated OCR layer.
-//
-// The upstream project launches an external ImageReader.exe and closes the capture window.
-// We keep the capture session alive, run Windows OCR locally, and attach a selectable text
-// panel to the existing full-screen WinCap body. This keeps OCR as part of the screenshot UI.
 namespace WeShotOcr
 {
     struct WordBlock
@@ -46,6 +41,12 @@ namespace WeShotOcr
 
     inline State state;
 
+    inline bool containsPoint(POINT pos)
+    {
+        if (!state.panel || !state.win) return false;
+        return state.panel->isPosIn(pos);
+    }
+
     inline void layoutPanel()
     {
         if (!state.win || !state.panel || !state.win->cutMask || !state.win->cutMask->hasRect()) return;
@@ -53,33 +54,26 @@ namespace WeShotOcr
         const auto& r = state.win->cutMask->maskRect;
         const float dpi = (std::max)(0.5f, state.win->dpi);
         const float deskW = state.win->w / dpi;
-        const float deskH = state.win->h / dpi;
         const float left = r.left / dpi;
         const float top = r.top / dpi;
         const float right = r.right / dpi;
         const float bottom = r.bottom / dpi;
 
-        constexpr float gap = 8.f;
         constexpr float panelW = 330.f;
-        float panelH = (std::clamp)(bottom - top, 220.f, 520.f);
-        panelH = (std::min)(panelH, (std::max)(120.f, deskH - 16.f));
+        // Keep the OCR panel visually attached to the capture: same top edge and same height.
+        const float panelH = (std::max)(1.f, bottom - top);
 
-        float px = right + gap;
-        if (px + panelW > deskW - 8.f) {
-            px = left - gap - panelW;
+        float px = right;
+        if (px + panelW > deskW) px = left - panelW;
+        if (px < 0.f) {
+            // Full-width / very wide selections have no free side space. Overlay on the right edge,
+            // but still keep exactly the same vertical span as the selected screenshot.
+            px = (std::max)(0.f, right - panelW);
         }
-        if (px < 8.f) {
-            // Narrow/full-screen selection: overlay the panel near the selection's right edge.
-            px = (std::max)(8.f, (std::min)(deskW - panelW - 8.f, right - panelW - 8.f));
-        }
-
-        float py = top;
-        if (py + panelH > deskH - 8.f) py = deskH - panelH - 8.f;
-        py = (std::max)(8.f, py);
 
         state.panel->setSize(panelW, panelH);
         state.panel->setPosition(Ling::Edge::Left, px);
-        state.panel->setPosition(Ling::Edge::Top, py);
+        state.panel->setPosition(Ling::Edge::Top, top);
     }
 
     inline bool copyCutPixels(WinCap* win, std::vector<BYTE>& pixels, int& outW, int& outH)
@@ -188,7 +182,8 @@ namespace WeShotOcr
         state.panel->setPadding(12.f);
         state.panel->setBg(0xFFFFFFFF);
         state.panel->setBorder(1.f, 0xD4D4D4FF);
-        state.panel->setBorderRadius(8.f);
+        // No floating-card rounded corners: the panel should read as an extension of the capture.
+        state.panel->setBorderRadius(0.f);
 
         auto header = state.panel->makeChild<Ling::Node>();
         header->setWidthPercent(100.f);
@@ -241,7 +236,7 @@ namespace WeShotOcr
         state.textBox->setPadding(9.f);
         state.textBox->setBg(0xFAFAFAFF);
         state.textBox->setBorder(1.f, 0xE3E3E3FF);
-        state.textBox->setBorderRadius(6.f);
+        state.textBox->setBorderRadius(4.f);
         state.textBox->setSelectionBgColor(0xB8DDF799);
 
         win->onMouseMove.add([](POINT) {
