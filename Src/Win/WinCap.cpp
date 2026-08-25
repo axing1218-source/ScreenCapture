@@ -305,6 +305,15 @@ void WinCap::onKey(UINT key)
             capVideo->onSaveKey(toClipboard);
         }
     }
+    else if (key == VK_UP || key == VK_DOWN || key == VK_LEFT || key == VK_RIGHT) {
+        POINT pos;
+        GetCursorPos(&pos);
+        if (key == VK_UP) pos.y -= 1;
+        else if (key == VK_DOWN) pos.y += 1;
+        else if (key == VK_LEFT) pos.x -= 1;
+        else pos.x += 1;
+        SetCursorPos(pos.x, pos.y); // 后面的 WM_MOUSEMOVE 会让 onMove 跟着刷新
+    }
     // Enter 与 Ctrl+C 一个意思：把图存进剪切板。比 Ctrl+C 多管一个阶段 ——
     // 选区刚框好（Adjust）时也认，那会儿等于点了 ToolCap 上的复制按钮
     else if (key == VK_RETURN) {
