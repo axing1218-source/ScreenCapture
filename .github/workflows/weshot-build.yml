@@ -26,7 +26,6 @@ jobs:
           git clone --depth 1 https://github.com/xland/Ling.git D:\project\Ling
 
           # VS 2026 is stricter about the constexpr lambda in Ling's random AppUserModelID macro.
-          # Keep upstream behavior, but pass the charset explicitly instead of relying on capture.
           $util = Get-Content D:\project\Ling\include\Util.h -Raw
           $util = $util.Replace('constexpr auto gen = [](size_t i, size_t idx) {', 'constexpr auto gen = [](std::wstring_view chars, size_t i, size_t idx) {')
           $util = $util.Replace('std::wstring{gen(I, I)...}', 'std::wstring{gen(chars, I, I)...}')
@@ -43,8 +42,6 @@ jobs:
       - name: Prepare portable GIF build
         shell: pwsh
         run: |
-          # The upstream project contains both gifski and bundled cgif encoders.
-          # For CI test builds use bundled cgif so the build has no external Rust library dependency.
           $gif = Get-Content Src\Win\VideoGif.hpp -Raw
           $gif = $gif.Replace('#include "gifski.h"', '')
           $gif = [regex]::Replace($gif, '(?s)\s*//这段代码是好的.*?inline void createGif2\(GifParam\* param\) \{', "`r`n    inline void createGif2(GifParam* param) {")
@@ -59,15 +56,53 @@ jobs:
           $proj = $proj.Replace(';D:\sdk\gifski\target\release\gifski.lib', '')
           Set-Content Src\ScreenCapture.vcxproj $proj -Encoding utf8
 
-      - name: Patch Gemini 3.7 Flash thinking level
+      - name: Patch Gemini network compatibility
         shell: pwsh
         run: |
           $gemini = Get-Content Src\GeminiClient.h -Raw
-          # Gemini 3.7 Flash does not support minimal. Use low, its fastest supported level.
-          $old = 'model.find(L"flash") != std::wstring::npos ? L"minimal" : L"low"'
-          if (-not $gemini.Contains($old)) { throw 'Expected Gemini thinking configuration was not found.' }
-          $gemini = $gemini.Replace($old, 'L"low"')
+
+          # Keep the selected Gemini model's own default thinking behavior. Do not force a model-specific
+          # thinkingLevel; this avoids compatibility regressions when Google changes supported levels.
+          $gemini = $gemini.Replace('        addFastThinking(generation, model);', '        // Use the model default thinking configuration.')
+          $gemini = $gemini.Replace('        JsonObject generation; addFastThinking(generation, modelId);', '        JsonObject generation; // Use the model default thinking configuration.')
+
+          # WinHTTP automatic proxy does not always inherit the current user's browser/VPN proxy on Windows.
+          # Prefer the current-user IE/Windows proxy when one is explicitly configured; otherwise keep the
+          # existing automatic-proxy behavior. This is especially important for Google APIs behind a local proxy.
+          $old = @'
+        HINTERNET session = WinHttpOpen(L"WeShot/0.8", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+            WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        if (!session) { result.error = L"无法初始化网络连接。"; return result; }
+'@
+          $new = @'
+        WINHTTP_CURRENT_USER_IE_PROXY_CONFIG userProxy{};
+        const BOOL hasUserProxyConfig = WinHttpGetIEProxyConfigForCurrentUser(&userProxy);
+        const bool hasNamedProxy = hasUserProxyConfig && userProxy.lpszProxy && userProxy.lpszProxy[0];
+        const DWORD accessType = hasNamedProxy ? WINHTTP_ACCESS_TYPE_NAMED_PROXY : WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY;
+        LPCWSTR proxyName = hasNamedProxy ? userProxy.lpszProxy : WINHTTP_NO_PROXY_NAME;
+        LPCWSTR proxyBypass = (hasNamedProxy && userProxy.lpszProxyBypass) ? userProxy.lpszProxyBypass : WINHTTP_NO_PROXY_BYPASS;
+        HINTERNET session = WinHttpOpen(L"WeShot/0.8.2", accessType, proxyName, proxyBypass, 0);
+        if (userProxy.lpszAutoConfigUrl) GlobalFree(userProxy.lpszAutoConfigUrl);
+        if (userProxy.lpszProxy) GlobalFree(userProxy.lpszProxy);
+        if (userProxy.lpszProxyBypass) GlobalFree(userProxy.lpszProxyBypass);
+        if (!session) { result.error = L"无法初始化网络连接。"; return result; }
+'@
+          if (-not $gemini.Contains($old)) { throw 'Could not locate WinHTTP session block.' }
+          $gemini = $gemini.Replace($old, $new)
+
+          # Keep failures reasonably quick. A text-only connection test should not sit for a minute.
+          $gemini = $gemini.Replace('WinHttpSetTimeouts(session, 8000, 8000, 15000, 25000);', 'WinHttpSetTimeouts(session, 7000, 7000, 12000, 20000);')
+          $gemini = $gemini.Replace('result.error = std::format(L"Gemini 网络请求失败（Windows 错误 {}）。", GetLastError());', 'result.error = std::format(L"Gemini 网络请求失败（Windows 错误 {}，已尝试当前用户代理）。", GetLastError());')
+
           Set-Content Src\GeminiClient.h $gemini -Encoding utf8
+
+          $verified = Get-Content Src\GeminiClient.h -Raw
+          if ($verified.Contains('addFastThinking(generation, model);') -or $verified.Contains('addFastThinking(generation, modelId);')) {
+            throw 'Model-default thinking patch did not apply.'
+          }
+          if (-not $verified.Contains('WinHttpGetIEProxyConfigForCurrentUser')) {
+            throw 'Current-user proxy support patch did not apply.'
+          }
 
       - name: Build ScreenCapture
         shell: pwsh
