@@ -148,3 +148,6 @@ foreach ($needle in @(
     if (-not $verify.Contains($needle)) { throw "Verification failed: $needle" }
 }
 Write-Host 'Translation UX patch applied successfully.'
+
+# v0.8.10: zoom controls + long screenshot direct translation.
+& (Join-Path $PSScriptRoot 'patch_v010_zoom_long.ps1')
