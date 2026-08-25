@@ -6,6 +6,7 @@ on:
     branches:
       - weshot-v0.1
       - weshot-v0.8.1-fix
+      - weshot-v0.8.8-ui
 
 jobs:
   build:
@@ -164,6 +165,10 @@ jobs:
           if (-not $verified.Contains('std::wstring path = L"/v1beta/models/" + modelId;')) { throw 'models.get test missing.' }
           if (-not $verified.Contains('等待 Gemini 响应失败')) { throw 'stage diagnostics missing.' }
           if (-not $verified.Contains('L"mediaResolution"')) { throw 'media resolution missing.' }
+
+      - name: Patch translation UI
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File tools\patch_translation_ui.ps1
 
       - name: Build ScreenCapture
         shell: pwsh
