@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <include/Ling.h>
+#include "../WeShotOcr.h"
 
 class WinCap;
 class ToolLong;
@@ -22,6 +23,15 @@ public:
 	void layoutTool();
 	// Manual capture is the default. This switches the already-running session to automatic scrolling.
 	void startAutoScroll();
+	// Freeze the current stitched image and open the same OCR result flow used by normal screenshots.
+	bool ocr()
+	{
+		if (imgData.empty() || imgW <= 0 || resultH <= 0) return false;
+		stopCap();
+		auto data = imgData;
+		WeShotOcr::showPixels(std::move(data), imgW, resultH);
+		return true;
+	}
 private:
 	void firstStep();
 	void makeImgPreview();
