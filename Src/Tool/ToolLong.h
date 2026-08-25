@@ -19,7 +19,7 @@ private:
 	CapLong* capLong;
 	bool dpiChanged{ false };
 	static constexpr float btnSize{ 32.f };
-	std::vector<std::wstring> btnIds = { L"auto",L"pin",L"close",L"save",L"clipboard" };
-	std::vector<std::wstring> btnCodes = { L"▶",L"\ue6a2",L"\ue62d",L"\ue608",L"\ue6ad" };
+	std::vector<std::wstring> btnIds = { L"auto",L"ocr",L"pin",L"close",L"save",L"clipboard" };
+	std::vector<std::wstring> btnCodes = { L"▶",L"\ue67b",L"\ue6a2",L"\ue62d",L"\ue608",L"\ue6ad" };
 	std::unique_ptr<Tip> tip;
 };
