@@ -43,6 +43,25 @@ Turn the xland/ScreenCapture fork into a portable WeChat-like Windows screenshot
 - Do not infer “proxy failure” from Windows 12002 alone; it only establishes that a WinHTTP stage timed out.
 - Network calls remain off the UI thread.
 
+## Translation state machine
+Use one shared state model for toolbar translation and the OCR result window so the two UI paths cannot drift apart.
+
+States:
+- **OriginalReady**: original pixels are valid, no usable translation is cached for the current revision.
+- **Translating**: one request is in flight for a specific capture revision; the original view remains visible and interactive.
+- **TranslationReady**: translated blocks and/or translated bitmap are cached for the same revision; Original/Translation switching is fully local.
+- **TranslationError**: original/local OCR remains available; Retry starts a new request for the current revision.
+
+Transitions:
+- `OriginalReady → Translating` only on an explicit Translate action.
+- `Translating → TranslationReady` only when the completed request revision equals the active capture revision.
+- `Translating → OriginalReady` when the selection/pixels change; the old callback may finish later but must be discarded.
+- `Translating → TranslationError` on transport/API/parse failure without replacing the original image.
+- `TranslationReady → OriginalReady` whenever the source pixels or selection revision changes.
+- Original/Translation tab or toolbar toggles never create a network request while in `TranslationReady`.
+
+UI rule: show a small non-blocking “Translating…” state near the existing toolbar/panel control rather than opening a modal window or freezing the capture surface.
+
 ## Translation rendering: WeChat-like direction
 Gemini should not generate a translated image. The rendering pipeline is local:
 
@@ -60,6 +79,15 @@ Gemini should not generate a translated image. The rendering pipeline is local:
 - **R3:** lightweight local inpainting/edge-aware fill for gradients, chat bubbles, and textured UI backgrounds.
 - **R4:** source text color estimation and adaptive alignment/font sizing so translated text visually follows the original rather than defaulting to black/white centered text.
 - **R5:** paragraph grouping for neighboring lines so long translations wrap as a paragraph instead of independent labels.
+
+### R2 algorithm checkpoint
+For each translated block:
+1. Expand the block rectangle by a small clamped margin.
+2. Sample four narrow border strips outside/at the edge of the text box, excluding high-gradient pixels where possible.
+3. Use a robust statistic (median or trimmed mean per channel) instead of averaging the glyph-filled interior.
+4. Compare strip colors. If they disagree strongly, keep the original background and defer that block to R3 rather than painting an obvious flat rectangle.
+5. Estimate text luminance from pixels that differ most from the background estimate, then choose a foreground color close to the source rather than unconditional black/white.
+6. Fit text using measured DirectWrite layout; reduce font size until the translated paragraph fits the original box within a defined minimum size.
 
 ## Capture revision and cache correctness
 Every pixel-affecting selection state has a monotonically increasing revision.
@@ -79,6 +107,8 @@ Each asynchronous Gemini request records the revision it started from. A complet
 - Panel mouse input must be consumed before capture hit-testing.
 - Gemini failure must not discard already available Windows/local OCR text.
 - Closing the side panel must return keyboard focus to the capture surface without cancelling or moving the active selection.
+- While selecting text, mouse move/up events remain owned by the panel until the selection gesture ends, even if the pointer crosses the panel edge.
+- Ctrl+C targets panel text only when the panel/text control owns focus; otherwise existing screenshot copy behavior is preserved.
 
 ## Long screenshot rules
 - Preserve original stitched pixels and save losslessly as PNG.
@@ -93,6 +123,19 @@ Each asynchronous Gemini request records the revision it started from. A complet
 - Empty/invalid structured response: keep original image and any available OCR result, allow Retry.
 - Stale asynchronous response: discard it based on revision mismatch.
 
+## Timing telemetry (local only)
+Capture a small per-request timing struct; do not send telemetry anywhere.
+- `pngEncodeMs`
+- `requestBuildMs`
+- `sendMs`
+- `waitResponseMs`
+- `readBodyMs`
+- `parseMs`
+- `renderMs`
+- `totalMs`
+
+The UI normally shows only `totalMs`. Detailed stage timings may be shown in a diagnostic status line or copied to logs when an error occurs. This lets us distinguish model latency from local rendering and networking without changing the user workflow.
+
 ## Acceptance tests for the current baseline
 1. **Settings connectivity:** `Test connection` returns model metadata plus elapsed milliseconds without invoking model inference.
 2. **Real translation timing:** `Screenshot → Translate` reports enough timing detail to distinguish PNG encode, send/wait, parse, and render costs.
@@ -101,6 +144,18 @@ Each asynchronous Gemini request records the revision it started from. A complet
 5. **Panel isolation:** selecting/copying OCR text never moves or resizes the screenshot selection.
 6. **Failure fallback:** Gemini failure leaves the original screenshot and any local OCR result intact.
 7. **Windows 10 smoke test:** verify the above on Windows 10 22H2 before introducing more rendering complexity.
+
+### Minimal test matrix
+Use the same small set of screenshots for each build so regressions are comparable:
+- plain black text on white background;
+- white text on a dark UI panel;
+- multi-line English chat bubble translated to Simplified Chinese;
+- mixed Chinese/English numbers and punctuation;
+- small UI text (roughly 12–14 px at 100% scaling);
+- 125% or 150% Windows display scaling;
+- a long screenshot with repeated chat bubbles crossing tile boundaries.
+
+For each sample record: OCR correctness, first-response total time, wait-response time, whether local toggle is instant, and whether the translated overlay visibly damages the background.
 
 ## Implementation order from v0.8.3
 1. **Stabilize connectivity diagnostics.** Validate metadata connection test and real inference timing on Windows 10 22H2.
@@ -111,6 +166,9 @@ Each asynchronous Gemini request records the revision it started from. A complet
 6. **Long-screenshot Gemini tiling.** Overlapping tiles with coordinate remapping and deduplication.
 7. **Snipaste-style annotation refinement.** Tool toggling, secondary controls, width/color/fill/opacity, mosaic/text behavior, undo/redo consistency.
 8. **Windows 10/11 smoke-test pass and packaging.** Single portable executable, no localhost dependency.
+
+## Current coding checkpoint
+Before changing visual rendering further, land the production Gemini behavior directly in source: supported low-latency thinking configuration, medium vision resolution, metadata-based connection test, longer inference receive timeout, and send-vs-wait diagnostics. Then remove equivalent workflow-time source rewriting. CI should only build/test source, not define production behavior.
 
 ## Current test baseline
 The latest v0.8.3 diagnostic build is the current test baseline. First test Settings → **Test connection**. A successful result should identify the selected model and elapsed milliseconds. Then test **Screenshot → Translate** and record first-response time. After the first translation completes, repeatedly switch Original/Translation; those switches should be immediate and should not send another Gemini request.
