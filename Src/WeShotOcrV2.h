@@ -11,14 +11,15 @@
 #include <algorithm>
 #include "Win/WinCap.h"
 #include "Win/CutMask.h"
+#include "Win/WinPin.h"
 #include "Util.h"
 
 // WeShot OCR result flow.
 //
-// OCR is intentionally kept lightweight here. The capture overlay is closed as soon as the
-// user chooses OCR, then a normal standalone result window opens. The left side keeps the
-// captured image; the right side is a real Ling::TextBox so mouse drag selection and Ctrl+C
-// do not compete with WinCap's selection/resize mouse handling.
+// OCR stays lightweight for now. The result window owns the source pixels and can hand the same
+// pixels to the existing WinPin editor, so annotation/mosaic uses the mature screenshot editor
+// instead of maintaining a second drawing implementation. showPixels() also lets long screenshots
+// enter exactly the same OCR/result flow.
 namespace WeShotOcrV2
 {
     struct Result
@@ -178,7 +179,7 @@ namespace WeShotOcrV2
                     delete dying;
                     auto app = Ling::App::get();
                     auto it = app->args.find(L"--auto-quit");
-                    if (it != app->args.end() && it->second == L"true") app->quit(0);
+                    if (it != app->args.end() && it->second == L"true" && !WinPin::hasWindow()) app->quit(0);
                 });
             });
         }
@@ -199,7 +200,7 @@ namespace WeShotOcrV2
             }
             else {
                 fullText = std::move(result.text);
-                status->setText(L"可直接用鼠标拖选文字，按 Ctrl+C 复制");
+                status->setText(L"可拖选文字复制；左侧图片可继续标注或马赛克");
                 textBox->setPlaceholder(L"");
                 textBox->setText(fullText);
             }
@@ -223,7 +224,7 @@ namespace WeShotOcrV2
             divider->setBg(0xD9D9D9FF);
 
             auto right = body->makeChild<Ling::Node>();
-            right->setWidth(380.f);
+            right->setWidth(400.f);
             right->setHeightPercent(100.f);
             right->setPadding(12.f);
             right->setBg(0xFFFFFFFF);
@@ -241,6 +242,17 @@ namespace WeShotOcrV2
             title->setColor(0x222222FF);
             title->setFlexGrow(1.f);
 
+            auto annotate = header->makeChild<Ling::Button>();
+            annotate->setText(L"标注图片");
+            annotate->setSize(76.f, 28.f);
+            annotate->setFontSize(12.f);
+            annotate->setBg(0xF3F3F3FF);
+            annotate->setHoverBg(0xE9E9E9FF);
+            annotate->setBorder(1.f, 0xDDDDDDFF);
+            annotate->setBorderRadius(4.f);
+            annotate->setMarginRight(8.f);
+            annotate->onClick.add([this](Ling::Button*) { openAnnotationEditor(); });
+
             auto copyAll = header->makeChild<Ling::Button>();
             copyAll->setText(L"复制全部");
             copyAll->setSize(76.f, 28.f);
@@ -257,7 +269,7 @@ namespace WeShotOcrV2
             status = right->makeChild<Ling::Label>();
             status->setHeight(28.f);
             status->setWidthPercent(100.f);
-            status->setText(L"正在识别... 左侧图片可右键复制或另存为");
+            status->setText(L"正在识别... 左侧图片可右键复制、另存为或标注");
             status->setFontSize(12.f);
             status->setColor(0x777777FF);
 
@@ -325,10 +337,31 @@ namespace WeShotOcrV2
             imageCanvas->finishPaint();
         }
 
+        void openAnnotationEditor()
+        {
+            if (pixels.empty() || imageW <= 0 || imageH <= 0) return;
+
+            MONITORINFO mi{ sizeof(MONITORINFO) };
+            HMONITOR mon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+            if (!mon || !GetMonitorInfo(mon, &mi)) return;
+            const int workW = mi.rcWork.right - mi.rcWork.left;
+            const int workH = mi.rcWork.bottom - mi.rcWork.top;
+            const int posX = mi.rcWork.left + (workW - (std::min)(imageW, workW)) / 2;
+            const int posY = mi.rcWork.top + (workH - (std::min)(imageH, workH)) / 2;
+
+            // WinPin copies the pixels into its own D2D bitmap during construction, so this
+            // temporary vector can go away immediately after initFromData returns.
+            auto editorPixels = pixels;
+            WinPin::initFromData(posX, posY, imageW, imageH, editorPixels);
+            if (status) status->setText(L"已打开标注编辑器；可使用画笔、文字、马赛克、撤销/重做");
+        }
+
         void showImageContextMenu()
         {
             HMENU menu = CreatePopupMenu();
             if (!menu) return;
+            AppendMenuW(menu, MF_STRING, 3, L"标注 / 马赛克...");
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
             AppendMenuW(menu, MF_STRING, 1, L"复制图片");
             AppendMenuW(menu, MF_STRING, 2, L"另存为 PNG...");
 
@@ -341,7 +374,10 @@ namespace WeShotOcrV2
             DestroyMenu(menu);
             PostMessageW(hwnd, WM_NULL, 0, 0);
 
-            if (cmd == 1) {
+            if (cmd == 3) {
+                openAnnotationEditor();
+            }
+            else if (cmd == 1) {
                 if (!pixels.empty()) Util::saveToClipboard(imageW, imageH, pixels.data());
             }
             else if (cmd == 2) {
@@ -370,22 +406,16 @@ namespace WeShotOcrV2
         return activeWindow != nullptr;
     }
 
-    inline void show(WinCap* win)
+    inline void showPixels(std::vector<BYTE> pixels, int width, int height)
     {
-        if (!win || !win->cutMask || !win->cutMask->hasRect()) return;
-
-        std::vector<BYTE> pixels;
-        int width{ 0 }, height{ 0 };
-        if (!copyCutPixels(win, pixels, width, height)) return;
+        if (pixels.empty() || width <= 0 || height <= 0) return;
+        const auto expected = static_cast<size_t>(width) * static_cast<size_t>(height) * 4;
+        if (pixels.size() < expected) return;
 
         const auto myRequest = ++requestId;
-
         if (activeWindow) activeWindow->close();
         activeWindow = new OcrResultWindow(pixels, width, height);
         activeWindow->open();
-
-        // Result window is independent; finish screenshot mode immediately.
-        win->close();
 
         std::thread([pixels = std::move(pixels), width, height, myRequest]() mutable {
             auto result = recognizeWindows(std::move(pixels), width, height);
@@ -394,5 +424,18 @@ namespace WeShotOcrV2
                 activeWindow->setOcrResult(std::move(result));
             });
         }).detach();
+    }
+
+    inline void show(WinCap* win)
+    {
+        if (!win || !win->cutMask || !win->cutMask->hasRect()) return;
+
+        std::vector<BYTE> pixels;
+        int width{ 0 }, height{ 0 };
+        if (!copyCutPixels(win, pixels, width, height)) return;
+
+        showPixels(std::move(pixels), width, height);
+        // Result window is independent; finish screenshot mode immediately.
+        win->close();
     }
 }
