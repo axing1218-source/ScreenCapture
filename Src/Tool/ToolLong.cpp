@@ -51,7 +51,8 @@ void ToolLong::onCreated()
 		else {
 			btn->setFontFamily(L"icon");
 			btn->setFontSize(13.f);
-			tip->bind(btn, Lang::get(std::format(L"tool.{}", btnIds[i])));
+			if (btnIds[i] == L"ocr") tip->bind(btn, Lang::get(L"cap.ocr"));
+			else tip->bind(btn, Lang::get(std::format(L"tool.{}", btnIds[i])));
 		}
 		btn->onClick.add([this](Ling::Button* btn) {onClick(btn);});
 	}
@@ -62,6 +63,11 @@ void ToolLong::onClick(Ling::Button* btn)
 {
 	if (btn->id == L"auto") {
 		if (capLong) capLong->startAutoScroll();
+		return;
+	}
+	if (btn->id == L"ocr") {
+		if (!capLong || !capLong->ocr()) return;
+		win->close();
 		return;
 	}
 	if (btn->id == L"pin") {
