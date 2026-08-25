@@ -9,7 +9,7 @@ using namespace Microsoft::WRL;
 
 CutMask::CutMask(Ling::WinBase* win) :win{ win }
 {
-	auto borderWidth = std::clamp(Setting::get()->getToolNum(L"capture", L"borderWidth", 2.f), 1.f, 8.f);
+	auto borderWidth = std::clamp(Setting::get()->getToolNum(L"capture", L"borderWidth", 2.f), 0.f, 8.f);
 	strokeWidth = borderWidth * win->dpi;
 	paddingTop *= win->dpi;
 	paddingMargin *= win->dpi;
@@ -194,8 +194,10 @@ void CutMask::paint(ID2D1DeviceContext* ctx)
 	ctx->FillRectangle(D2D1::RectF(0.f, maskRect.bottom, win->w, win->h), brushBg.Get());
 	ctx->FillRectangle(D2D1::RectF(0.f, maskRect.top, maskRect.left, maskRect.bottom), brushBg.Get());
 	ctx->FillRectangle(D2D1::RectF(maskRect.right, maskRect.top, win->w, maskRect.bottom), brushBg.Get());
-	auto halfStrokeWidth{ strokeWidth / 2.f };
-	ctx->DrawRectangle(D2D1::RectF(maskRect.left - halfStrokeWidth, maskRect.top - halfStrokeWidth, maskRect.right + halfStrokeWidth, maskRect.bottom + halfStrokeWidth), brushBorder.Get(), strokeWidth);
+	if (strokeWidth > 0.f) {
+		auto halfStrokeWidth{ strokeWidth / 2.f };
+		ctx->DrawRectangle(D2D1::RectF(maskRect.left - halfStrokeWidth, maskRect.top - halfStrokeWidth, maskRect.right + halfStrokeWidth, maskRect.bottom + halfStrokeWidth), brushBorder.Get(), strokeWidth);
+	}
 	if (hideLabel) return;
 	ctx->FillRectangle(layoutRect, brushBg.Get());
 	ctx->DrawTextLayout({ layoutRect.left + paddingMargin, layoutRect.top + paddingMargin }, layout.Get(), brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
