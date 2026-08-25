@@ -1,6 +1,8 @@
 ﻿#include "pch.h"
+#include <thread>
 #include "../Lang.h"
 #include "../Setting.h"
+#include "../GeminiClient.h"
 #include "WinSetting.h"
 #include "WinSettingCommon.h"
 
@@ -8,6 +10,7 @@ WinSettingCommon::WinSettingCommon(Ling::WinBase* parent):Ling::Node(parent)
 {
     initAutoStartCtrls();
     initCaptureBorderCtrls();
+    initGeminiCtrls();
     initLangCtrls();
     auto weakThis = getWeakThis();
     win->onDestroy.add([this, weakThis]() {
@@ -98,6 +101,101 @@ void WinSettingCommon::initCaptureBorderCtrls()
     };
     minusBtn->onClick.add([change](Ling::Button*) { change(-1.f); });
     plusBtn->onClick.add([change](Ling::Button*) { change(1.f); });
+
+    auto border = makeChild<Ling::Node>();
+    border->setHeight(1.f);
+    border->setBg(0xE0E0E0FF);
+}
+
+void WinSettingCommon::initGeminiCtrls()
+{
+    auto keyRow = makeChild<Ling::Node>();
+    keyRow->setHeight(44.f);
+    keyRow->setFlexDirection(Ling::FlexDirection::Row);
+    keyRow->setAlignItems(Ling::Align::Center);
+
+    auto keyLabel = keyRow->makeChild<Ling::Label>();
+    keyLabel->setText(L"Gemini API Key");
+    keyLabel->setHeightPercent(100.f);
+    keyLabel->setJustifyContent(Ling::Justify::Center);
+    keyLabel->setFlexGrow(1.f);
+
+    geminiApiKeyBox = keyRow->makeChild<Ling::TextBox>();
+    geminiApiKeyBox->setSize(230.f, 30.f);
+    geminiApiKeyBox->setPadding(6.f);
+    geminiApiKeyBox->setFontSize(12.f);
+    geminiApiKeyBox->setBg(0xFFFFFFFF);
+    geminiApiKeyBox->setBorder(1.f, 0xD8D8D8FF);
+    geminiApiKeyBox->setBorderRadius(4.f);
+    geminiApiKeyBox->setPlaceholder(L"粘贴 Gemini API Key");
+    geminiApiKeyBox->setText(Setting::get()->getGeminiApiKey());
+
+    auto saveBtn = keyRow->makeChild<Ling::Button>();
+    saveBtn->setText(L"保存");
+    saveBtn->setSize(52.f, 30.f);
+    saveBtn->setFontSize(12.f);
+    saveBtn->setMarginLeft(8.f);
+    saveBtn->setBorder(1.f, 0xD8D8D8FF);
+    saveBtn->setBorderRadius(4.f);
+    saveBtn->setHoverBg(0xF2F2F2FF);
+    saveBtn->onClick.add([this](Ling::Button*) {
+        if (!geminiApiKeyBox || !geminiModelBox) return;
+        Setting::get()->setGeminiApiKey(geminiApiKeyBox->getText());
+        Setting::get()->setGeminiModel(geminiModelBox->getText());
+        if (geminiStatus) geminiStatus->setText(L"Gemini 设置已保存（API Key 已用 Windows 加密保存）");
+    });
+
+    auto modelRow = makeChild<Ling::Node>();
+    modelRow->setHeight(44.f);
+    modelRow->setFlexDirection(Ling::FlexDirection::Row);
+    modelRow->setAlignItems(Ling::Align::Center);
+
+    auto modelLabel = modelRow->makeChild<Ling::Label>();
+    modelLabel->setText(L"Gemini 模型");
+    modelLabel->setHeightPercent(100.f);
+    modelLabel->setJustifyContent(Ling::Justify::Center);
+    modelLabel->setFlexGrow(1.f);
+
+    geminiModelBox = modelRow->makeChild<Ling::TextBox>();
+    geminiModelBox->setSize(230.f, 30.f);
+    geminiModelBox->setPadding(6.f);
+    geminiModelBox->setFontSize(12.f);
+    geminiModelBox->setBg(0xFFFFFFFF);
+    geminiModelBox->setBorder(1.f, 0xD8D8D8FF);
+    geminiModelBox->setBorderRadius(4.f);
+    geminiModelBox->setText(Setting::get()->getGeminiModel());
+
+    auto testBtn = modelRow->makeChild<Ling::Button>();
+    testBtn->setText(L"测试连接");
+    testBtn->setSize(76.f, 30.f);
+    testBtn->setFontSize(12.f);
+    testBtn->setMarginLeft(8.f);
+    testBtn->setBorder(1.f, 0xD8D8D8FF);
+    testBtn->setBorderRadius(4.f);
+    testBtn->setHoverBg(0xF2F2F2FF);
+    testBtn->onClick.add([this](Ling::Button*) {
+        if (!geminiApiKeyBox || !geminiModelBox) return;
+        auto apiKey = geminiApiKeyBox->getText();
+        auto model = geminiModelBox->getText();
+        Setting::get()->setGeminiApiKey(apiKey);
+        Setting::get()->setGeminiModel(model);
+        if (geminiStatus) geminiStatus->setText(L"正在连接 Gemini...");
+        auto weakThis = getWeakThis();
+        std::thread([this, weakThis, apiKey = std::move(apiKey), model = std::move(model)]() mutable {
+            auto result = GeminiClient::testConnection(apiKey, model);
+            Ling::App::get()->dq.TryEnqueue([this, weakThis, result = std::move(result)]() mutable {
+                if (!weakThis.lock() || !geminiStatus) return;
+                geminiStatus->setText(result.ok ? L"Gemini 连接成功" : result.message);
+            });
+        }).detach();
+    });
+
+    geminiStatus = makeChild<Ling::Label>();
+    geminiStatus->setHeight(28.f);
+    geminiStatus->setWidthPercent(100.f);
+    geminiStatus->setFontSize(11.f);
+    geminiStatus->setColor(0x777777FF);
+    geminiStatus->setText(L"翻译功能使用此 API Key；程序不会把 Key 写入源码。默认模型 gemini-3.7-flash");
 
     auto border = makeChild<Ling::Node>();
     border->setHeight(1.f);
