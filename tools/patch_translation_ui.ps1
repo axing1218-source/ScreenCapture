@@ -151,3 +151,4 @@ Write-Host 'Translation UX patch applied successfully.'
 
 # v0.8.10: zoom controls + long screenshot direct translation.
 & (Join-Path $PSScriptRoot 'patch_v010_zoom_long.ps1')
+& (Join-Path $PSScriptRoot 'patch_v010_compilefix.ps1')
