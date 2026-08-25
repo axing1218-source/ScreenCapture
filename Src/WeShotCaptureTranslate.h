@@ -221,6 +221,24 @@ namespace WeShotCaptureTranslate
             Ling::App::get()->dq.TryEnqueue([win, result = std::move(result), sourcePixels = std::move(sourcePixels),
                 width, height, myRequest, sx, sy, border]() mutable {
                 if (requestId.load() != myRequest || owner != win || WinCap::get() != win) return;
+
+                // The user may resize or move the selection while Gemini is still working. Never let
+                // an old asynchronous result paint over a newer selection: validate the current rect
+                // again at delivery time, not only when the Translate button is clicked next.
+                if (!win->cutMask || !win->cutMask->hasRect()) {
+                    busy = false; ready = false;
+                    return;
+                }
+                auto& current = win->cutMask->maskRect;
+                int currentX = win->x + (int)current.left;
+                int currentY = win->y + (int)current.top;
+                int currentW = std::max(1, (int)(current.right - current.left));
+                int currentH = std::max(1, (int)(current.bottom - current.top));
+                if (currentX != sx || currentY != sy || currentW != width || currentH != height) {
+                    busy = false; ready = false;
+                    return;
+                }
+
                 busy = false;
                 if (!result.ok) {
                     auto msg = result.error.empty() ? std::wstring(L"Gemini 翻译失败。") : result.error;
