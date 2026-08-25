@@ -1,5 +1,7 @@
 ﻿#include "pch.h"
 #include <include/Ling.h>
+#include <dpapi.h>
+#include <wincrypt.h>
 #include "Setting.h"
 #include "Util.h"
 #include "Lang.h"
@@ -12,8 +14,60 @@ namespace {
     // 配置文件的默认内容。空文件、坏 JSON、缺键都拿它兜底，所以这里列出的每一项
     // 都是代码里会直接按名字取的（见 getLang / getAutoStart / initShortcutKeys）
     constexpr std::wstring_view defaultConfig{ LR"""({"common":{"autoStart":false,"language":"zh-CN"},"shortcutKey":{"cap":"Ctrl+Alt+A"}})""" };
-}
 
+    std::wstring protectText(const std::wstring& value)
+    {
+        if (value.empty()) return L"";
+        DATA_BLOB in{};
+        in.pbData = reinterpret_cast<BYTE*>(const_cast<wchar_t*>(value.data()));
+        in.cbData = static_cast<DWORD>(value.size() * sizeof(wchar_t));
+        DATA_BLOB out{};
+        if (!CryptProtectData(&in, L"WeShot Gemini API Key", nullptr, nullptr, nullptr,
+            CRYPTPROTECT_UI_FORBIDDEN, &out)) {
+            return L"";
+        }
+
+        DWORD chars = 0;
+        CryptBinaryToStringW(out.pbData, out.cbData,
+            CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, nullptr, &chars);
+        std::wstring encoded(chars, L'\0');
+        if (chars > 0 && CryptBinaryToStringW(out.pbData, out.cbData,
+            CRYPT_STRING_BASE64 | CRYPT_STRING_NOCRLF, encoded.data(), &chars)) {
+            while (!encoded.empty() && encoded.back() == L'\0') encoded.pop_back();
+        }
+        else {
+            encoded.clear();
+        }
+        LocalFree(out.pbData);
+        return encoded;
+    }
+
+    std::wstring unprotectText(const std::wstring& encoded)
+    {
+        if (encoded.empty()) return L"";
+        DWORD bytes = 0;
+        if (!CryptStringToBinaryW(encoded.c_str(), 0, CRYPT_STRING_BASE64,
+            nullptr, &bytes, nullptr, nullptr) || bytes == 0) return L"";
+        std::vector<BYTE> encrypted(bytes);
+        if (!CryptStringToBinaryW(encoded.c_str(), 0, CRYPT_STRING_BASE64,
+            encrypted.data(), &bytes, nullptr, nullptr)) return L"";
+
+        DATA_BLOB in{};
+        in.pbData = encrypted.data();
+        in.cbData = bytes;
+        DATA_BLOB out{};
+        if (!CryptUnprotectData(&in, nullptr, nullptr, nullptr, nullptr,
+            CRYPTPROTECT_UI_FORBIDDEN, &out)) {
+            return L"";
+        }
+        std::wstring value;
+        if (out.cbData >= sizeof(wchar_t)) {
+            value.assign(reinterpret_cast<const wchar_t*>(out.pbData), out.cbData / sizeof(wchar_t));
+        }
+        LocalFree(out.pbData);
+        return value;
+    }
+}
 
 Setting::Setting() :dataPath{ initDataPath() }, configPath{ initConfigPath() }
 {
@@ -34,11 +88,8 @@ Setting::Setting() :dataPath{ initDataPath() }, configPath{ initConfigPath() }
     configObj = JsonObject::Parse(defaultConfig); 
 }
 
-
-
 Setting::~Setting()
 {
-
 }
 
 void Setting::init()
@@ -183,6 +234,46 @@ void Setting::setLang(const std::wstring& langCode)
     common.SetNamedValue(L"language", JsonValue::CreateStringValue(langCode));
     setting->save();
 	Lang::get()->initLang(langCode);
+}
+
+std::wstring Setting::getGeminiApiKey()
+{
+    auto gemini = configObj.GetNamedObject(L"gemini", nullptr);
+    if (!gemini) return L"";
+    auto protectedValue = std::wstring{ gemini.GetNamedString(L"apiKeyProtected", L"") };
+    return unprotectText(protectedValue);
+}
+
+void Setting::setGeminiApiKey(const std::wstring& apiKey)
+{
+    auto gemini = configObj.GetNamedObject(L"gemini", nullptr);
+    if (!gemini) {
+        gemini = JsonObject();
+        configObj.SetNamedValue(L"gemini", gemini);
+    }
+    auto protectedValue = protectText(apiKey);
+    gemini.SetNamedValue(L"apiKeyProtected", JsonValue::CreateStringValue(protectedValue));
+    save();
+}
+
+std::wstring Setting::getGeminiModel()
+{
+    auto gemini = configObj.GetNamedObject(L"gemini", nullptr);
+    if (!gemini) return L"gemini-3.7-flash";
+    auto model = std::wstring{ gemini.GetNamedString(L"model", L"gemini-3.7-flash") };
+    if (model.empty()) model = L"gemini-3.7-flash";
+    return model;
+}
+
+void Setting::setGeminiModel(const std::wstring& model)
+{
+    auto gemini = configObj.GetNamedObject(L"gemini", nullptr);
+    if (!gemini) {
+        gemini = JsonObject();
+        configObj.SetNamedValue(L"gemini", gemini);
+    }
+    gemini.SetNamedValue(L"model", JsonValue::CreateStringValue(model.empty() ? L"gemini-3.7-flash" : model));
+    save();
 }
 
 JsonObject Setting::getToolObj(const std::wstring& tool)
