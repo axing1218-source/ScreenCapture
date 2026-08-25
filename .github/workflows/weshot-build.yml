@@ -74,9 +74,31 @@ jobs:
           Copy-Item $exe.FullName artifact\ScreenCapture.exe
           Write-Host "Built: $($exe.FullName)"
 
-      - name: Upload WeShot test executable
+      - name: Bundle PaddleOCR-json
+        shell: pwsh
+        run: |
+          $url = 'https://github.com/hiroi-sora/PaddleOCR-json/releases/download/v1.4.1/PaddleOCR-json_v1.4.1_windows_x64.7z'
+          $archive = Join-Path $env:RUNNER_TEMP 'PaddleOCR-json.7z'
+          $extract = Join-Path $env:RUNNER_TEMP 'PaddleOCR-json'
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          New-Item -ItemType Directory -Force $extract | Out-Null
+          & 7z x $archive "-o$extract" -y | Out-Host
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $ocrExe = Get-ChildItem -Path $extract -Recurse -Filter 'PaddleOCR-json.exe' | Select-Object -First 1
+          if (-not $ocrExe) { throw 'PaddleOCR-json.exe was not found after extraction.' }
+          $ocrDir = $ocrExe.Directory.FullName
+          $dest = 'artifact\ocr\PaddleOCR-json'
+          New-Item -ItemType Directory -Force $dest | Out-Null
+          Copy-Item -Path (Join-Path $ocrDir '*') -Destination $dest -Recurse -Force
+
+          # Preserve upstream licensing information in the distributed test package.
+          Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/hiroi-sora/PaddleOCR-json/main/LICENSE' -OutFile (Join-Path $dest 'LICENSE-PaddleOCR-json.txt')
+          Write-Host "Bundled PaddleOCR-json from: $ocrDir"
+
+      - name: Upload WeShot test package
         uses: actions/upload-artifact@v4
         with:
           name: WeShot-Windows-x64
-          path: artifact/ScreenCapture.exe
+          path: artifact/
           if-no-files-found: error
