@@ -2,9 +2,15 @@
 
 This note turns the current WeShot plan into a regression-friendly implementation order for the xland/ScreenCapture fork. The goal is WeChat-like screenshot interaction without coupling network, OCR-panel, and translated-image rendering changes into one patch.
 
-## Gate A — Gemini source parity
+## Current status
 
-Make `Src/GeminiClient.h` itself match the already-tested v0.8.3 diagnostics behavior before changing UI:
+- Gate A is complete in source and now passes a clean Windows x64 CI build without Gemini production-code rewriting.
+- The successful build produced a fresh `WeShot-Windows-x64` artifact and is the new regression baseline.
+- Work now moves to Gate B. Do not start renderer tuning until Gate B and Gate C pass the interaction matrix.
+
+## Gate A — Gemini source parity — COMPLETE
+
+`Src/GeminiClient.h` now matches the tested v0.8.3 diagnostics behavior before further UI changes:
 
 - Gemini 3.x screenshot OCR/translation uses `thinkingLevel=low`; keep the Gemini 2.5 compatibility path unchanged.
 - Image-bearing requests use `MEDIA_RESOLUTION_MEDIUM`; text-only OCR-block translation does not.
@@ -12,10 +18,9 @@ Make `Src/GeminiClient.h` itself match the already-tested v0.8.3 diagnostics beh
 - Report send failure and wait-for-response failure separately, with elapsed milliseconds.
 - Settings `Test connection` uses authenticated `GET /v1beta/models/{modelId}` rather than generating `OK`.
 - Keep the existing automatic WinHTTP proxy policy in this gate so transport changes are not mixed with API changes.
+- CI only asserts these invariants; it must not rewrite Gemini production code.
 
-After this compiles once, CI must stop rewriting Gemini production code and only assert the above invariants.
-
-## Gate B — one capture revision, one request graph
+## Gate B — one capture revision, one request graph — NEXT
 
 Introduce a small capture-session state owned by the screenshot result flow:
 
@@ -24,8 +29,12 @@ Introduce a small capture-session state owned by the screenshot result flow:
 - A callback whose revision is stale is discarded before touching the UI.
 - Toolbar Translate and OCR-side-panel Translate share the same cache and in-flight request for the same revision.
 - If OCR text/boxes already exist for the same revision, translating from the OCR panel should use text-only block translation instead of uploading the image again.
+- Starting a second request for the same `(revision, operation)` must attach another UI waiter to the existing in-flight request rather than create a duplicate Gemini call.
+- Cache identity should include at least `captureRevision`, target language, and operation type so a later language selector can be added without invalidating this design.
+- Request completion must update cache first, then notify views; views never own network results directly.
+- Changing pixels invalidates cached OCR/translation immediately, but opening/closing the OCR panel or switching Original/Translation does not.
 
-Acceptance: changing the selection while Gemini is working must never paint the old translation over the new capture.
+Acceptance: changing the selection while Gemini is working must never paint the old translation over the new capture, and toolbar/panel actions for the same revision must generate at most one matching Gemini request.
 
 ## Gate C — WeChat-like screenshot interaction and OCR side panel
 
@@ -78,6 +87,7 @@ Use the same four screenshots each time: English chat, mixed Chinese/English, de
 3. Switch Original/Translation repeatedly; no network request should occur.
 4. Open OCR panel; verify text selection/copy and panel scrolling do not alter the capture.
 5. Start Translate and immediately change capture pixels; stale result must be discarded.
-6. Compare translated-image placement, font fit and background repair against the previous build.
+6. Trigger Translate from toolbar and OCR panel for the same unchanged capture; verify only one matching request is sent.
+7. Compare translated-image placement, font fit and background repair against the previous build.
 
 Do not begin Gate D visual tuning until Gates A-C pass this matrix.
