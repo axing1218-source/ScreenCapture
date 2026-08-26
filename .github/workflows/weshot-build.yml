@@ -31,7 +31,11 @@ jobs:
       - name: Build Yoga and Ling
         shell: pwsh
         run: |
-          msbuild D:\project\Ling\Ling.slnx /m /p:Configuration=Release /p:Platform=x64
+          # Build only the two libraries WeShot consumes. Building the whole upstream
+          # Ling.slnx also builds Demo in parallel; Demo can link before Ling.lib exists.
+          msbuild D:\project\Ling\yoga\yoga.vcxproj /m /p:Configuration=Release /p:Platform=x64
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          msbuild D:\project\Ling\Ling.vcxproj /m /p:Configuration=Release /p:Platform=x64
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Prepare portable GIF build
