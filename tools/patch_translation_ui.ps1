@@ -154,3 +154,5 @@ Write-Host 'Translation UX patch applied successfully.'
 & (Join-Path $PSScriptRoot 'patch_v010_compilefix.ps1')
 # v0.8.11: complete long screenshot translation + functional Original tab.
 & (Join-Path $PSScriptRoot 'patch_v011_long_translation_fix.ps1')
+# v0.8.12: region-based Youdao-style image layout + mouse-wheel zoom.
+& (Join-Path $PSScriptRoot 'patch_v012_youdao_layout.ps1')
