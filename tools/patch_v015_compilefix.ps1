@@ -58,7 +58,9 @@ Write-Host 'v0.8.15 clipboard layout compile fix applied.'
 & (Join-Path $PSScriptRoot 'patch_v018_geometry_regularization.ps1')
 # v0.8.19: continuously reconstruct stable box geometry from source text metrics.
 & (Join-Path $PSScriptRoot 'patch_v019_stable_geometry.ps1')
-# v0.8.20: Youdao-style local physical OCR geometry; Gemini boxes become hints/fallback.
+# v0.8.20: local physical OCR geometry; Gemini boxes become hints/fallback.
 & (Join-Path $PSScriptRoot 'patch_v020_wrapper.ps1')
 # v0.8.21: pixel-based visual text geometry fallback when OCR cannot see thin text.
 & (Join-Path $PSScriptRoot 'patch_v021_wrapper.ps1')
+# v0.8.22: paragraph recovery + hard no-overlap layout slots + deterministic fit audit.
+& (Join-Path $PSScriptRoot 'patch_v022_constraint_layout.ps1')
