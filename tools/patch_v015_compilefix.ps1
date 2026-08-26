@@ -49,3 +49,6 @@ Set-Content $path $src -Encoding utf8
 $verify = Get-Content $path -Raw
 if (-not $verify.Contains('const int contentW = std::max(40, clientW - pad * 2);')) { throw 'v0.8.15 compile fix verification failed' }
 Write-Host 'v0.8.15 clipboard layout compile fix applied.'
+
+# v0.8.16: continuous source-geometry/content adaptive translation typography.
+& (Join-Path $PSScriptRoot 'patch_v016_adaptive_typography.ps1')
