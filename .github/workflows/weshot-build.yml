@@ -1,19 +1,18 @@
 name: WeShot Windows Build
 
 on:
-  workflow_dispatch:
   push:
-    branches:
-      - weshot-v0.1
-      - weshot-v0.8.1-fix
+    branches: [ "weshot-v0.8.1-fix" ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
-
     steps:
       - name: Checkout ScreenCapture fork
         uses: actions/checkout@v4
+        with:
+          ref: weshot-v0.8.1-fix
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
@@ -32,9 +31,7 @@ jobs:
       - name: Build Yoga and Ling
         shell: pwsh
         run: |
-          msbuild D:\project\Ling\yoga\yoga.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=D:\project\Ling\
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          msbuild D:\project\Ling\Ling.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=D:\project\Ling\
+          msbuild D:\project\Ling\Ling.sln /m /p:Configuration=Release /p:Platform=x64
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Prepare portable GIF build
@@ -59,7 +56,8 @@ jobs:
           $required = @(
             'L"WeShot/0.8.4"',
             'WinHttpSetTimeouts(session, 7000, 7000, 15000, 60000);',
-            'JsonValue::CreateStringValue(L"low")',
+            'L"thinkingLevel"',
+            'L"low"',
             'L"mediaResolution"',
             'L"MEDIA_RESOLUTION_MEDIUM"',
             'std::wstring path = L"/v1beta/models/" + modelId;',
