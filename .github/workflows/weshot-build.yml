@@ -7,6 +7,7 @@ on:
       - weshot-v0.1
       - weshot-v0.8.1-fix
       - weshot-v0.8.8-ui
+      - weshot-v0.8.23
 
 jobs:
   build:
