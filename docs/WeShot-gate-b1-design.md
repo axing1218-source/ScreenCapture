@@ -16,6 +16,25 @@ Create it with the capture window and destroy it with the window. No static `own
 
 `WeShotCaptureSession` is data-only and thread-safe enough for request coordination later. It must not depend on `TranslationOverlay`, `OcrResultWindow`, or toolbar widgets.
 
+## B1 source-boundary guardrails after `WinCap.h` audit
+
+The current public API exposes `getCutImg()` while the canonical BGRA readback helper `getCutPixels(...)` is private. Keep that ownership direction rather than making the low-level readback public.
+
+Use a small standalone header such as `WeShotCaptureSession.h` for `CaptureSnapshot` and the minimal session type. `WinCap.h` may include that data-only header, while translation/OCR code can consume `CaptureSnapshot` without including UI implementation headers. This avoids circular dependencies when B2 later adds cache/result structures.
+
+For B1, the public `WinCap` surface should stay semantic and minimal:
+
+```cpp
+CaptureSnapshot captureSnapshot();
+uint64_t captureRevision() const;
+```
+
+`invalidateCaptureSnapshot()` should remain private unless a concrete external pixel-producing path needs it. Selection changes are already known inside `WinCap`; exposing invalidation publicly would let UI code accidentally mutate capture identity.
+
+Do not move `CutMask`, toolbar geometry, OCR panel state, translated-view state, or Gemini request state into `CaptureSnapshot`. A snapshot identifies only the source pixels and their committed selection geometry. That keeps WeChat-like presentation toggles (`Original` / `Translation`, opening/closing OCR) from becoming false pixel revisions.
+
+While an Adjust drag is active, hide any translated overlay immediately for visual correctness, but keep the previously committed snapshot alive until mouse-up. On mouse-up, publish exactly one new revision only if the committed rectangle changed. This gives the UI responsive WeChat-like behavior without producing a new full BGRA copy on every mouse move.
+
 ## Snapshot structure
 
 Use an immutable value object:
@@ -117,6 +136,19 @@ B1 should make the smallest possible call-site change:
 - Preserve non-live entry points such as `showPixels()` for long screenshots/result-window reuse; B1 can later publish those pixels as a new canonical session snapshot rather than forcing them through `CutMask`.
 
 This boundary is important: B1 centralizes source pixels only. It does not yet centralize OCR text, translation blocks, display state, or in-flight requests.
+
+## WeChat-like interaction invariants during B1
+
+B1 is an internal ownership change and must be invisible to normal screenshot interaction:
+
+- Clicking OCR must not close, resize, or commit the selection.
+- Clicking Translate may show a non-modal loading state, but the original selection remains usable.
+- Opening/closing the OCR side panel is presentation-only and must not change revision.
+- Original/Translation toggles are presentation-only and must never force a fresh snapshot.
+- Text selection inside the OCR panel owns mouse capture for that gesture and must not leak move/up events into `WinCap` selection adjustment.
+- If the user begins moving/resizing the screenshot while Gemini is still working, hide translated presentation immediately; when the request completes, its revision gate decides whether it is still valid.
+
+These invariants are the bridge between B1 data ownership and the later B2/B3 shared-request state machine.
 
 ## B1 migration sequence
 
