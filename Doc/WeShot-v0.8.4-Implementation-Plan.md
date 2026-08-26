@@ -10,6 +10,8 @@ The next architectural problem is duplicated capture state. The floating screens
 
 `WinCap` is the correct owner for the first shared-session implementation because it already owns the live `CutMask`, the capture stage, and the only low-level `getCutPixels()` path for the current selection. Do not introduce a process-wide singleton for this state.
 
+The `WinCap`/`CutMask` screenshot path is already expressed in virtual-desktop physical pixels: `WinCap::x/y` are the virtual desktop origin, `CutMask::maskRect` is client-space physical pixels, and capture uses the same physical-pixel geometry. `CaptureSnapshot` therefore stores physical pixels directly; do not insert a DIP conversion layer between capture, Gemini boxes, and local translated rendering.
+
 ## Gate A - Gemini source consistency (COMPLETE)
 
 Completed source behavior:
@@ -40,6 +42,7 @@ struct CaptureSnapshot {
     uint64_t revision{0};
     int width{0};
     int height{0};
+    POINT screenOrigin{0, 0}; // absolute virtual-desktop physical pixels
     std::shared_ptr<const std::vector<BYTE>> bgra;
 };
 
@@ -54,16 +57,37 @@ Suggested `WinCap` responsibilities:
 
 - `std::shared_ptr<CaptureSession> captureSession;`
 - `CaptureSnapshot currentSnapshot();`
+- `uint64_t captureRevision() const;`
+- `void commitSelectionRevisionIfChanged();`
 - `void invalidateCaptureSession();`
 
 `currentSnapshot()` is the only place allowed to call `getCutPixels()` for OCR/translation. If the selection has not changed since the last snapshot, it returns the existing immutable snapshot instead of copying pixels again.
 
+`screenOrigin` is always computed as `WinCap::x/y + maskRect.left/top`. It must remain an absolute virtual-desktop physical-pixel coordinate so translated overlays remain correct on secondary monitors, including monitors whose origin is negative.
+
+#### Exact revision commit rule
+
+Do not increment revision from `onMove()` while the user is dragging. That would turn every mouse-move message into a new capture identity and potentially a new full pixel copy.
+
+Use this concrete interaction contract:
+
+1. When entering `CapStage::Adjust`, remember the committed rectangle.
+2. On Adjust `onDown`, save the rectangle that existed before `CutMask::startAdjust()` and mark an adjustment gesture active.
+3. During Adjust `onMove`, update the live `CutMask` and reposition the toolbar, but do not increment revision.
+4. Immediately hide any translated preview while a selection adjustment is active so stale text is never visually presented as current.
+5. On Adjust `onUp`, compare the final rectangle with the rectangle captured at mouse-down.
+6. Only if the source rectangle actually changed, increment revision once, discard current-revision snapshot/cache handles, and record the new committed rectangle.
+7. A click that does not alter the final rectangle must not create a new revision.
+
+For the initial Select -> Adjust transition, the first committed non-empty selection establishes the first usable revision exactly once. New screenshot/source replacement and completed long-screenshot output also establish a new revision.
+
 Revision rules:
 
-- Increment revision only when the selected source pixels can change: selection move, resize, new capture, or replacement of the source image.
-- Merely opening/closing the OCR window, switching Original/Translation, copying text, moving the result window, or repainting must not increment revision.
+- Increment revision only when the selected source pixels can change: initial committed selection, selection move, selection resize, new capture, or replacement of the source image.
+- Merely opening/closing the OCR window, switching Original/Translation, copying text, moving the result window, repainting, or relayout after DPI notification must not increment revision.
 - Long screenshot output is a new source image and must enter the same abstraction with a new revision; do not bolt long-image translation onto a separate state model later.
 - A snapshot is immutable once handed to an async worker. Never let a worker read directly from `CutMask`, `screenImg`, or mutable UI state.
+- A revision change invalidates future use of old results but does not mutate old snapshot memory already owned by an in-flight worker.
 
 Lifetime rules:
 
@@ -71,13 +95,27 @@ Lifetime rules:
 - OCR/result windows hold `shared_ptr`/`weak_ptr` access to session data, not raw pointers back into `WinCap` for async completion.
 - Closing an OCR window must not destroy a valid translation cache that the toolbar can still reuse.
 - Closing the capture invalidates the session; late async callbacks must detect expiry/revision mismatch and silently drop their result.
+- UI callbacks use a separate weak lifetime token in addition to revision matching. Revision proves result identity; the lifetime token proves the target UI still exists. Both checks are required before touching UI state.
+
+#### B1 source migration boundary
+
+Keep B1 deliberately narrow:
+
+- Introduce the session/snapshot data type in a small standalone header with no Ling/UI dependency beyond basic Win32 geometry types.
+- `WinCap` becomes the only producer of `CaptureSnapshot` for the normal screenshot path.
+- Migrate toolbar translation and OCR-result creation to consume a snapshot rather than independently copying selection pixels.
+- Do not change Gemini request format, translation rendering, OCR text layout, or result-window appearance in B1.
+- Do not add in-flight request sharing yet; B1 proves capture identity and immutable source ownership first.
 
 B1 acceptance test:
 
-1. Open OCR and toolbar translation for one unchanged selection; both must report/use the same revision and source dimensions.
+1. Open OCR and toolbar translation for one unchanged selection; both must report/use the same revision, source dimensions, and `screenOrigin`.
 2. Reopen OCR without changing selection; no second pixel copy should be required.
-3. Move or resize selection; revision changes exactly once and the old snapshot becomes stale.
-4. Close OCR while a request is running; completion must not access freed UI memory.
+3. Move or resize selection; revision changes exactly once on mouse-up and the old snapshot becomes stale.
+4. Press/release without changing the rectangle; revision stays unchanged.
+5. Close OCR while a request is running; completion must not access freed UI memory.
+6. Repeat on a secondary display with a negative virtual-desktop origin; image/translated coordinates must remain aligned.
+7. Repeat with mixed monitor scaling; no explicit DIP conversion may be introduced in the capture/session path.
 
 ### B2 - Shared OCR and translation cache
 
@@ -130,6 +168,8 @@ The OCR side panel must behave like a normal text/result pane without affecting 
 Requirements:
 
 - Mouse drag/select, wheel, Ctrl+C, Ctrl+A, and text focus inside the panel are consumed by the panel.
+- Gesture ownership is decided at mouse-down, not later during move. Once a gesture starts inside the OCR/result panel, the capture layer must not receive the corresponding move/up events.
+- The capture layer must never call `CutMask::startAdjust()` for a pointer gesture that originated inside the OCR/result panel.
 - Clicking/copying text must not resize, move, confirm, cancel, or redraw the capture selection.
 - `Esc` while the text editor owns focus first follows the text/result-window convention; screenshot cancellation should happen only when the capture layer owns the command.
 - Original/Translation tabs update the text pane immediately from the shared cache.
@@ -142,6 +182,7 @@ Acceptance test:
 2. Ctrl+A/Ctrl+C affects only the focused text pane.
 3. Scroll a long OCR result without moving the capture selection.
 4. Switch Original/Translation repeatedly after one completed request; no network activity occurs.
+5. Begin a drag inside the OCR pane and release outside it; the screenshot selection still must not arm or move.
 
 ## Gate D - WeChat-like in-place translation rendering (R2)
 
