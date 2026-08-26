@@ -50,17 +50,11 @@ $verify = Get-Content $path -Raw
 if (-not $verify.Contains('const int contentW = std::max(40, clientW - pad * 2);')) { throw 'v0.8.15 compile fix verification failed' }
 Write-Host 'v0.8.15 clipboard layout compile fix applied.'
 
-# v0.8.16: continuous source-geometry/content adaptive translation typography.
 & (Join-Path $PSScriptRoot 'patch_v016_adaptive_typography.ps1')
-# v0.8.17: fixed parser-level Gemini coordinate-space normalization + source diagnostics.
 & (Join-Path $PSScriptRoot 'patch_v017_coordinate_normalization_fixed.ps1')
-# v0.8.18: repair geometrically impossible translation boxes using source text metrics.
 & (Join-Path $PSScriptRoot 'patch_v018_geometry_regularization.ps1')
-# v0.8.19: continuously reconstruct stable box geometry from source text metrics.
 & (Join-Path $PSScriptRoot 'patch_v019_stable_geometry.ps1')
-# v0.8.20: local physical OCR geometry; Gemini boxes become hints/fallback.
 & (Join-Path $PSScriptRoot 'patch_v020_wrapper.ps1')
-# v0.8.21: pixel-based visual text geometry fallback when OCR cannot see thin text.
 & (Join-Path $PSScriptRoot 'patch_v021_wrapper.ps1')
-# v0.8.22: paragraph recovery + hard no-overlap layout slots + deterministic fit audit.
 & (Join-Path $PSScriptRoot 'patch_v022_wrapper.ps1')
+& (Join-Path $PSScriptRoot 'patch_v023_source_paragraph_layout.ps1')
