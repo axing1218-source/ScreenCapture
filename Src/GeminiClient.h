@@ -145,11 +145,11 @@ namespace GeminiClient
         HttpResult result;
         if (apiKey.empty()) { result.error = L"Gemini API Key 为空。"; return result; }
         const auto modelId = model.empty() ? std::wstring(L"gemini-3.7-flash") : model;
-        HINTERNET session = WinHttpOpen(L"WeShot/0.8", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+        HINTERNET session = WinHttpOpen(L"WeShot/0.8.4", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
             WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
         if (!session) { result.error = L"无法初始化网络连接。"; return result; }
         // 截图工具不应让一次请求挂一分钟。连接失败尽快反馈；正常 Flash 请求通常远低于此上限。
-        WinHttpSetTimeouts(session, 8000, 8000, 15000, 25000);
+        WinHttpSetTimeouts(session, 7000, 7000, 15000, 60000);
         HINTERNET connect = WinHttpConnect(session, L"generativelanguage.googleapis.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
         if (!connect) { WinHttpCloseHandle(session); result.error = L"无法连接 Gemini API。"; return result; }
         std::wstring path = L"/v1beta/models/" + modelId + L":generateContent";
@@ -163,13 +163,24 @@ namespace GeminiClient
         WinHttpAddRequestHeaders(request, headers.c_str(), (DWORD)-1L,
             WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
         auto body = wideToUtf8(json);
+        const ULONGLONG sendStart = GetTickCount64();
         BOOL sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
             body.empty() ? WINHTTP_NO_REQUEST_DATA : body.data(), (DWORD)body.size(), (DWORD)body.size(), 0);
-        if (sent) sent = WinHttpReceiveResponse(request, nullptr);
         if (!sent) {
-            result.error = std::format(L"Gemini 网络请求失败（Windows 错误 {}）。", GetLastError());
+            const DWORD err = GetLastError();
+            result.error = std::format(L"Gemini 发送请求失败（Windows 错误 {}，{} ms）。", err, GetTickCount64() - sendStart);
         }
-        else {
+        BOOL received = FALSE;
+        ULONGLONG receiveStart = 0;
+        if (sent) {
+            receiveStart = GetTickCount64();
+            received = WinHttpReceiveResponse(request, nullptr);
+            if (!received) {
+                const DWORD err = GetLastError();
+                result.error = std::format(L"等待 Gemini 响应失败（Windows 错误 {}，{} ms）。", err, GetTickCount64() - receiveStart);
+            }
+        }
+        if (sent && received) {
             DWORD statusSize = sizeof(result.status);
             WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
                 WINHTTP_HEADER_NAME_BY_INDEX, &result.status, &statusSize, WINHTTP_NO_HEADER_INDEX);
@@ -332,7 +343,7 @@ namespace GeminiClient
         else {
             // Flash 截图 OCR/翻译属于简单视觉任务，minimal 优先低延迟；非 Flash 用 low 更稳妥。
             thinking.SetNamedValue(L"thinkingLevel", JsonValue::CreateStringValue(
-                model.find(L"flash") != std::wstring::npos ? L"minimal" : L"low"));
+                L"low"));
         }
         generationConfig.SetNamedValue(L"thinkingConfig", thinking);
     }
@@ -361,6 +372,7 @@ namespace GeminiClient
         generation.SetNamedValue(L"responseMimeType", JsonValue::CreateStringValue(L"application/json"));
         generation.SetNamedValue(L"responseSchema", schema);
         generation.SetNamedValue(L"maxOutputTokens", JsonValue::CreateNumberValue(maxOutputTokens));
+        if (png && !png->empty()) generation.SetNamedValue(L"mediaResolution", JsonValue::CreateStringValue(L"MEDIA_RESOLUTION_MEDIUM"));
         addFastThinking(generation, model);
         JsonObject root;
         root.SetNamedValue(L"contents", contents);
@@ -381,22 +393,51 @@ namespace GeminiClient
     inline TestResult testConnection(const std::wstring& apiKey, const std::wstring& model)
     {
         TestResult out;
+        if (apiKey.empty()) { out.message = L"Gemini API Key 为空。"; return out; }
         const auto modelId = model.empty() ? std::wstring(L"gemini-3.7-flash") : model;
-        JsonArray parts;
-        JsonObject part; part.SetNamedValue(L"text", JsonValue::CreateStringValue(L"Reply with exactly OK"));
-        parts.Append(part);
-        JsonObject content; content.SetNamedValue(L"parts", parts);
-        JsonArray contents; contents.Append(content);
-        JsonObject generation; addFastThinking(generation, modelId);
-        generation.SetNamedValue(L"maxOutputTokens", JsonValue::CreateNumberValue(16));
-        JsonObject root; root.SetNamedValue(L"contents", contents); root.SetNamedValue(L"generationConfig", generation);
-        auto http = postGenerate(apiKey, modelId, root.Stringify().c_str());
-        if (!http.error.empty()) { out.message = http.error; return out; }
-        if (http.status < 200 || http.status >= 300) {
-            out.message = std::format(L"连接失败（HTTP {}）：{}", http.status, getApiError(http.body)); return out;
+        const ULONGLONG started = GetTickCount64();
+        HINTERNET session = WinHttpOpen(L"WeShot/0.8.4-Test", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+            WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+        if (!session) { out.message = L"测试连接：无法初始化网络。"; return out; }
+        WinHttpSetTimeouts(session, 7000, 7000, 10000, 15000);
+        HINTERNET connect = WinHttpConnect(session, L"generativelanguage.googleapis.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
+        if (!connect) { WinHttpCloseHandle(session); out.message = L"测试连接：无法创建 Google API 连接。"; return out; }
+        std::wstring path = L"/v1beta/models/" + modelId;
+        HINTERNET request = WinHttpOpenRequest(connect, L"GET", path.c_str(), nullptr,
+            WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+        if (!request) { WinHttpCloseHandle(connect); WinHttpCloseHandle(session); out.message = L"测试连接：无法创建请求。"; return out; }
+        std::wstring headers = L"x-goog-api-key: " + apiKey + L"\r\n";
+        WinHttpAddRequestHeaders(request, headers.c_str(), (DWORD)-1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);
+        const ULONGLONG sendAt = GetTickCount64();
+        if (!WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) {
+            const DWORD err = GetLastError();
+            out.message = std::format(L"测试连接：发送失败（Windows 错误 {}，{} ms）。", err, GetTickCount64() - sendAt);
+            WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session); return out;
         }
-        if (extractGenerateText(http.body).empty()) { out.message = L"Gemini 已响应，但没有返回文本。"; return out; }
-        out.ok = true; out.message = L"连接成功"; return out;
+        const ULONGLONG receiveAt = GetTickCount64();
+        if (!WinHttpReceiveResponse(request, nullptr)) {
+            const DWORD err = GetLastError();
+            out.message = std::format(L"测试连接：等待响应失败（Windows 错误 {}，{} ms）。", err, GetTickCount64() - receiveAt);
+            WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session); return out;
+        }
+        DWORD statusCode = 0, statusSize = sizeof(statusCode);
+        WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &statusSize, WINHTTP_NO_HEADER_INDEX);
+        std::string response;
+        for (;;) {
+            DWORD available = 0;
+            if (!WinHttpQueryDataAvailable(request, &available) || available == 0) break;
+            const size_t oldSize = response.size(); response.resize(oldSize + available);
+            DWORD read = 0;
+            if (!WinHttpReadData(request, response.data() + oldSize, available, &read)) { response.resize(oldSize); break; }
+            response.resize(oldSize + read);
+        }
+        WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session);
+        if (statusCode < 200 || statusCode >= 300) {
+            out.message = std::format(L"测试连接失败（HTTP {}）：{}", statusCode, getApiError(response)); return out;
+        }
+        out.ok = true;
+        out.message = std::format(L"连接成功 · {} · {} ms", modelId, GetTickCount64() - started);
+        return out;
     }
 
     inline OcrResult recognizeImage(const std::vector<BYTE>& pixels, int width, int height,
@@ -530,3 +571,4 @@ namespace GeminiClient
         out.ok = true; return out;
     }
 }
+
