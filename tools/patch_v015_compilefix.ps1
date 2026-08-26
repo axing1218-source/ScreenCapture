@@ -63,4 +63,4 @@ Write-Host 'v0.8.15 clipboard layout compile fix applied.'
 # v0.8.21: pixel-based visual text geometry fallback when OCR cannot see thin text.
 & (Join-Path $PSScriptRoot 'patch_v021_wrapper.ps1')
 # v0.8.22: paragraph recovery + hard no-overlap layout slots + deterministic fit audit.
-& (Join-Path $PSScriptRoot 'patch_v022_constraint_layout.ps1')
+& (Join-Path $PSScriptRoot 'patch_v022_wrapper.ps1')
