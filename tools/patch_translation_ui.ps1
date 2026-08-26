@@ -156,3 +156,5 @@ Write-Host 'Translation UX patch applied successfully.'
 & (Join-Path $PSScriptRoot 'patch_v011_long_translation_fix.ps1')
 # v0.8.12: region-based Youdao-style image layout + mouse-wheel zoom.
 & (Join-Path $PSScriptRoot 'patch_v012_youdao_layout.ps1')
+# v0.8.14: OCR -> Translate also uses complete-image visual-region translation.
+& (Join-Path $PSScriptRoot 'patch_v014_ocr_then_translate_full_image.ps1')
