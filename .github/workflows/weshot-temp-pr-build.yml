@@ -1,16 +1,19 @@
 name: WeShot Temporary PR Build
 
 on:
-  pull_request:
-    branches:
-      - weshot-v0.8.8-ui
+  workflow_dispatch:
+  issues:
+    types: [opened]
 
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch' || github.event.issue.title == 'Trigger WeShot v0.8.23 build'
     runs-on: windows-latest
     steps:
-      - name: Checkout ScreenCapture fork
+      - name: Checkout WeShot v0.8.23
         uses: actions/checkout@v4
+        with:
+          ref: weshot-v0.8.23
 
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
