@@ -52,5 +52,5 @@ Write-Host 'v0.8.15 clipboard layout compile fix applied.'
 
 # v0.8.16: continuous source-geometry/content adaptive translation typography.
 & (Join-Path $PSScriptRoot 'patch_v016_adaptive_typography.ps1')
-# v0.8.17: parser-level Gemini coordinate-space normalization + source diagnostics.
-& (Join-Path $PSScriptRoot 'patch_v017_coordinate_normalization.ps1')
+# v0.8.17: fixed parser-level Gemini coordinate-space normalization + source diagnostics.
+& (Join-Path $PSScriptRoot 'patch_v017_coordinate_normalization_fixed.ps1')
