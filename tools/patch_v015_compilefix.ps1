@@ -56,3 +56,5 @@ Write-Host 'v0.8.15 clipboard layout compile fix applied.'
 & (Join-Path $PSScriptRoot 'patch_v017_coordinate_normalization_fixed.ps1')
 # v0.8.18: repair geometrically impossible translation boxes using source text metrics.
 & (Join-Path $PSScriptRoot 'patch_v018_geometry_regularization.ps1')
+# v0.8.19: continuously reconstruct stable box geometry from source text metrics.
+& (Join-Path $PSScriptRoot 'patch_v019_stable_geometry.ps1')
