@@ -41,3 +41,6 @@ if (-not $verify.Contains('正在按完整图片版式翻译')) {
     throw 'v0.8.14 verification failed: status text missing'
 }
 Write-Host 'v0.8.14 OCR-then-translate full-image layout fix applied.'
+
+# v0.8.15: real recording hole, stronger QR decoding and session clipboard history.
+& (Join-Path $PSScriptRoot 'patch_v015_record_qr_clipboard.ps1')
