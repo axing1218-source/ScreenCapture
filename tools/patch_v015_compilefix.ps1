@@ -56,5 +56,6 @@ Write-Host 'v0.8.15 clipboard layout compile fix applied.'
 & (Join-Path $PSScriptRoot 'patch_v019_stable_geometry.ps1')
 & (Join-Path $PSScriptRoot 'patch_v020_wrapper.ps1')
 & (Join-Path $PSScriptRoot 'patch_v021_wrapper.ps1')
+& (Join-Path $PSScriptRoot 'patch_v023_multiscale_ocr.ps1')
 & (Join-Path $PSScriptRoot 'patch_v022_wrapper.ps1')
 & (Join-Path $PSScriptRoot 'patch_v023_wrapper.ps1')
