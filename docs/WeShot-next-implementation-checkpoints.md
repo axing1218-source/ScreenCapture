@@ -10,7 +10,8 @@ The branch now has a clear source/CI mismatch that must be removed before new UI
 - production inference in source still uses a 25 s receive timeout;
 - Settings connection testing still performs a real `generateContent` inference asking Gemini to reply `OK`;
 - source reports send/receive failure as one generic WinHTTP error;
-- the successful v0.8.3 binary gets `low`, longer inference timeout, metadata connection testing and stage diagnostics from the workflow patch rather than from production source.
+- `makeBaseRequest()` does not yet set screenshot media resolution in production source;
+- the successful v0.8.3 binary gets `low`, medium vision resolution, longer inference timeout, metadata connection testing and stage diagnostics from the workflow patch rather than from production source.
 
 This means the next code change must be source parity, not another rendering or proxy experiment. Preserve the network route that already reached Google; change one variable group at a time.
 
@@ -46,6 +47,26 @@ Implementation order inside Gate A:
 5. only then remove the workflow source-rewrite block and replace it with assertions that fail if source regresses.
 
 Do not combine Gate A with proxy changes. The earlier `AUTOMATIC_PROXY` path has already produced a Google HTTP response, so routing changes need independent evidence.
+
+#### Gate A implementation contract after source audit
+
+The next patch should be deliberately narrow and touch the existing functions rather than introducing a second Gemini client:
+
+- `addFastThinking()` — keep the Gemini 2.5 compatibility branch unchanged; for the 3.x path use `thinkingLevel=low` instead of selecting `minimal` for Flash.
+- `makeBaseRequest()` — keep structured JSON/schema behavior unchanged and add `mediaResolution=MEDIA_RESOLUTION_MEDIUM` only for requests that include PNG image data. Text-only `translateOcrBlocks()` should not carry image-resolution settings.
+- `postGenerate()` — keep `WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY` and the current Google host/path unchanged. Split `WinHttpSendRequest` and `WinHttpReceiveResponse` error handling so logs identify whether failure occurred while sending or waiting. Restore a realistic inference receive ceiling (60 s is the v0.8.3 diagnostic baseline), but do not treat the ceiling as a latency target.
+- `testConnection()` — stop constructing a prompt and stop calling `postGenerate()`. Perform a lightweight authenticated `GET /v1beta/models/{modelId}` using the same host, headers and WinHTTP access policy. A 2xx response proves key/model/network reachability without paying inference latency.
+- `HttpResult` / `TestResult` — keep the current public result shape for this gate unless timing cannot be surfaced without a small additive field. Avoid changing OCR/UI call sites in the same patch.
+
+Verification assertions for the workflow after source parity lands:
+
+- fail if production source contains `thinkingLevel` with `minimal` for the 3.x Flash path;
+- fail if `testConnection()` contains the `Reply with exactly OK` prompt;
+- fail if production source lacks `MEDIA_RESOLUTION_MEDIUM` for image requests;
+- fail if production source lacks separate send/wait diagnostic strings;
+- fail if the workflow still rewrites these behaviors instead of merely checking them.
+
+This gives Gate A a clean rollback boundary: if the next binary behaves differently, the regression is in transport/request configuration, not OCR-panel state or translated-image rendering.
 
 **Exit condition:** local and CI builds contain identical Gemini production behavior and the workflow no longer rewrites production request code.
 
