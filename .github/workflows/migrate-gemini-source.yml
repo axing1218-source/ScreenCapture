@@ -1,0 +1,155 @@
+name: Migrate Gemini runtime settings into source
+
+on:
+  push:
+    branches:
+      - weshot-v0.8.1-fix
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: weshot-v0.8.1-fix
+          fetch-depth: 0
+
+      - name: Persist validated Gemini v0.8.3 behavior into GeminiClient.h
+        shell: pwsh
+        run: |
+          $path = 'Src\GeminiClient.h'
+          $gemini = Get-Content $path -Raw
+
+          # Idempotent: if the source is already migrated, leave it unchanged.
+          if ($gemini.Contains('L"WeShot/0.8.4"') -and
+              $gemini.Contains('L"mediaResolution"') -and
+              $gemini.Contains('测试连接：等待响应失败') -and
+              $gemini.Contains('等待 Gemini 响应失败')) {
+            Write-Host 'GeminiClient.h is already migrated.'
+            exit 0
+          }
+
+          $gemini = $gemini.Replace('L"WeShot/0.8"', 'L"WeShot/0.8.4"')
+          $gemini = $gemini.Replace('model.find(L"flash") != std::wstring::npos ? L"minimal" : L"low"', 'L"low"')
+          $gemini = $gemini.Replace('WinHttpSetTimeouts(session, 8000, 8000, 15000, 25000);', 'WinHttpSetTimeouts(session, 7000, 7000, 15000, 60000);')
+
+          $oldSendLines = @(
+            '        BOOL sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,',
+            '            body.empty() ? WINHTTP_NO_REQUEST_DATA : body.data(), (DWORD)body.size(), (DWORD)body.size(), 0);',
+            '        if (sent) sent = WinHttpReceiveResponse(request, nullptr);',
+            '        if (!sent) {',
+            '            result.error = std::format(L"Gemini 网络请求失败（Windows 错误 {}）。", GetLastError());',
+            '        }',
+            '        else {'
+          )
+          $oldSend = $oldSendLines -join "`r`n"
+          if (-not $gemini.Contains($oldSend)) { $oldSend = $oldSendLines -join "`n" }
+          if ($gemini.Contains($oldSend)) {
+            $newSendLines = @(
+              '        const ULONGLONG sendStart = GetTickCount64();',
+              '        BOOL sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,',
+              '            body.empty() ? WINHTTP_NO_REQUEST_DATA : body.data(), (DWORD)body.size(), (DWORD)body.size(), 0);',
+              '        if (!sent) {',
+              '            const DWORD err = GetLastError();',
+              '            result.error = std::format(L"Gemini 发送请求失败（Windows 错误 {}，{} ms）。", err, GetTickCount64() - sendStart);',
+              '        }',
+              '        BOOL received = FALSE;',
+              '        ULONGLONG receiveStart = 0;',
+              '        if (sent) {',
+              '            receiveStart = GetTickCount64();',
+              '            received = WinHttpReceiveResponse(request, nullptr);',
+              '            if (!received) {',
+              '                const DWORD err = GetLastError();',
+              '                result.error = std::format(L"等待 Gemini 响应失败（Windows 错误 {}，{} ms）。", err, GetTickCount64() - receiveStart);',
+              '            }',
+              '        }',
+              '        if (sent && received) {'
+            )
+            $gemini = $gemini.Replace($oldSend, ($newSendLines -join "`r`n"))
+          }
+
+          $tokenLine = '        generation.SetNamedValue(L"maxOutputTokens", JsonValue::CreateNumberValue(maxOutputTokens));'
+          $mediaLine = '        if (png && !png->empty()) generation.SetNamedValue(L"mediaResolution", JsonValue::CreateStringValue(L"MEDIA_RESOLUTION_MEDIUM"));'
+          if ($gemini.Contains($tokenLine) -and -not $gemini.Contains('L"mediaResolution"')) {
+            $gemini = $gemini.Replace($tokenLine, $tokenLine + "`r`n" + $mediaLine)
+          }
+
+          $testLines = @(
+            '    inline TestResult testConnection(const std::wstring& apiKey, const std::wstring& model)',
+            '    {',
+            '        TestResult out;',
+            '        if (apiKey.empty()) { out.message = L"Gemini API Key 为空。"; return out; }',
+            '        const auto modelId = model.empty() ? std::wstring(L"gemini-3.7-flash") : model;',
+            '        const ULONGLONG started = GetTickCount64();',
+            '        HINTERNET session = WinHttpOpen(L"WeShot/0.8.4-Test", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,',
+            '            WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);',
+            '        if (!session) { out.message = L"测试连接：无法初始化网络。"; return out; }',
+            '        WinHttpSetTimeouts(session, 7000, 7000, 10000, 15000);',
+            '        HINTERNET connect = WinHttpConnect(session, L"generativelanguage.googleapis.com", INTERNET_DEFAULT_HTTPS_PORT, 0);',
+            '        if (!connect) { WinHttpCloseHandle(session); out.message = L"测试连接：无法创建 Google API 连接。"; return out; }',
+            '        std::wstring path = L"/v1beta/models/" + modelId;',
+            '        HINTERNET request = WinHttpOpenRequest(connect, L"GET", path.c_str(), nullptr,',
+            '            WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);',
+            '        if (!request) { WinHttpCloseHandle(connect); WinHttpCloseHandle(session); out.message = L"测试连接：无法创建请求。"; return out; }',
+            '        std::wstring headers = L"x-goog-api-key: " + apiKey + L"\r\n";',
+            '        WinHttpAddRequestHeaders(request, headers.c_str(), (DWORD)-1L, WINHTTP_ADDREQ_FLAG_ADD | WINHTTP_ADDREQ_FLAG_REPLACE);',
+            '        const ULONGLONG sendAt = GetTickCount64();',
+            '        if (!WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) {',
+            '            const DWORD err = GetLastError();',
+            '            out.message = std::format(L"测试连接：发送失败（Windows 错误 {}，{} ms）。", err, GetTickCount64() - sendAt);',
+            '            WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session); return out;',
+            '        }',
+            '        const ULONGLONG receiveAt = GetTickCount64();',
+            '        if (!WinHttpReceiveResponse(request, nullptr)) {',
+            '            const DWORD err = GetLastError();',
+            '            out.message = std::format(L"测试连接：等待响应失败（Windows 错误 {}，{} ms）。", err, GetTickCount64() - receiveAt);',
+            '            WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session); return out;',
+            '        }',
+            '        DWORD statusCode = 0, statusSize = sizeof(statusCode);',
+            '        WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &statusSize, WINHTTP_NO_HEADER_INDEX);',
+            '        std::string response;',
+            '        for (;;) {',
+            '            DWORD available = 0;',
+            '            if (!WinHttpQueryDataAvailable(request, &available) || available == 0) break;',
+            '            const size_t oldSize = response.size(); response.resize(oldSize + available);',
+            '            DWORD read = 0;',
+            '            if (!WinHttpReadData(request, response.data() + oldSize, available, &read)) { response.resize(oldSize); break; }',
+            '            response.resize(oldSize + read);',
+            '        }',
+            '        WinHttpCloseHandle(request); WinHttpCloseHandle(connect); WinHttpCloseHandle(session);',
+            '        if (statusCode < 200 || statusCode >= 300) {',
+            '            out.message = std::format(L"测试连接失败（HTTP {}）：{}", statusCode, getApiError(response)); return out;',
+            '        }',
+            '        out.ok = true;',
+            '        out.message = std::format(L"连接成功 · {} · {} ms", modelId, GetTickCount64() - started);',
+            '        return out;',
+            '    }'
+          )
+          $testFunction = $testLines -join "`r`n"
+          $pattern = '(?s)    inline TestResult testConnection\(const std::wstring& apiKey, const std::wstring& model\).*?\r?\n    \}\r?\n\r?\n    inline OcrResult recognizeImage'
+          $replacement = $testFunction + "`r`n`r`n    inline OcrResult recognizeImage"
+          $patched = [regex]::Replace($gemini, $pattern, $replacement, 1)
+          if ($patched -eq $gemini) { throw 'Could not replace connection test.' }
+          $gemini = $patched
+
+          if (-not $gemini.Contains('L"low"')) { throw 'low thinking setting missing.' }
+          if ($gemini.Contains('L"minimal"')) { throw 'minimal thinking must not remain.' }
+          if (-not $gemini.Contains('L"mediaResolution"')) { throw 'medium image resolution missing.' }
+          if (-not $gemini.Contains('等待 Gemini 响应失败')) { throw 'inference stage diagnostics missing.' }
+          if (-not $gemini.Contains('std::wstring path = L"/v1beta/models/" + modelId;')) { throw 'models.get connection test missing.' }
+
+          Set-Content $path $gemini -Encoding utf8
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add $path
+          if (git diff --cached --quiet) {
+            Write-Host 'No source migration changes to commit.'
+            exit 0
+          }
+          git commit -m 'Move validated Gemini runtime settings into source'
+          git push origin HEAD:weshot-v0.8.1-fix
