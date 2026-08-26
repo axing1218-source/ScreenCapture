@@ -1,98 +1,131 @@
 # WeShot next implementation checkpoints
 
-This supplements `WeShot-implementation-plan.md` and turns the current v0.8.3 direction into small, reviewable changes.
+This supplements `WeShot-implementation-plan.md` and turns the current v0.8.4 direction into small, reviewable changes.
 
 ## Current code audit
 
-The branch now has a clear source/CI mismatch that must be removed before new UI work:
+Gate A is complete: the validated Gemini runtime behavior now lives in production source and the normal Windows build succeeds without CI rewriting `GeminiClient.h`.
 
-- `Src/GeminiClient.h` still defaults Flash models to `thinkingLevel=minimal`;
-- production inference in source still uses a 25 s receive timeout;
-- Settings connection testing still performs a real `generateContent` inference asking Gemini to reply `OK`;
-- source reports send/receive failure as one generic WinHTTP error;
-- `makeBaseRequest()` does not yet set screenshot media resolution in production source;
-- the successful v0.8.3 binary gets `low`, medium vision resolution, longer inference timeout, metadata connection testing and stage diagnostics from the workflow patch rather than from production source.
+Verified baseline:
 
-This means the next code change must be source parity, not another rendering or proxy experiment. Preserve the network route that already reached Google; change one variable group at a time.
+- `gemini-3.7-flash` uses supported low thinking in source;
+- image requests use medium vision resolution;
+- inference keeps a realistic receive ceiling and separates send vs wait-response failures;
+- Settings connection testing uses the model metadata endpoint instead of generating `OK`;
+- CI checks source behavior rather than defining it;
+- the latest pure-source Windows x64 build succeeds.
+
+The next risk is no longer Gemini transport. It is duplicated capture/OCR/translation ownership between the screenshot toolbar path and OCR result-window path. Gate B therefore starts by introducing one capture-scoped session before adding more UI or rendering changes.
 
 ## Code ownership map
 
 Keep each concern in one place so WeChat-like interaction does not become coupled to Gemini transport details.
 
 - `Src/GeminiClient.h`: Gemini REST transport, PNG payload construction, structured OCR/translation parsing, model metadata connection test, request-stage timing. It must not own capture UI state.
-- `Src/Setting.cpp` / `Src/Setting.h`: API key, model selection, connection-test presentation. Connection testing must call the same routing policy as inference.
-- capture/toolbar code under `Src/Win`: owns active selection revision, translation toggle presentation, and invalidation when source pixels change. It should consume cached translation state rather than starting ad-hoc duplicate requests.
-- OCR result-window code under `Src/Win`: owns side-panel hit testing, focus, text selection/copy, Original/Translation presentation and Retry. It must not own canonical OCR/translation data.
-- a capture-scoped result object should become the single owner of original pixels, OCR blocks, translated blocks, rendered overlay, request state, revision and timings.
+- `Src/Setting.cpp` / `Src/Setting.h`: API key, model selection, connection-test presentation.
+- capture/toolbar code under `Src/Win`: owns active selection lifecycle and presentation of Original/Translation controls, but should not own a second OCR/translation cache.
+- OCR result-window code under `Src/Win`: owns side-panel hit testing, focus, text selection/copy, Original/Translation presentation and Retry, but should not own canonical OCR/translation data.
+- a capture-scoped `CaptureSession` object becomes the single owner of the selected source snapshot, revision, derived OCR/translation state and in-flight request identity.
 
 ## Migration gates
 
-### Gate A — Gemini source parity
+### Gate A — Gemini source parity — complete
 
-Move the behavior already validated by the v0.8.3 diagnostics build into `Src/GeminiClient.h` without changing visible UI:
+Exit condition is satisfied: local and CI builds use the same Gemini production behavior and the workflow no longer needs to rewrite request logic.
 
-- default `gemini-3.7-flash` uses supported low thinking;
-- ordinary screenshot vision uses medium resolution;
-- Settings connection test uses `GET /v1beta/models/{model}` rather than inference;
-- real inference has a longer receive ceiling than the connection test;
-- send failure and wait-response failure are reported separately with elapsed time;
-- Windows error 12002 is described as timeout, not automatically as proxy failure.
+Do not reopen proxy/model configuration work unless a reproducible failure provides new evidence. The next binary should change capture state only.
 
-Implementation order inside Gate A:
+### Gate B — shared capture revision/session
 
-1. change only model request configuration (`low` + medium vision resolution);
-2. move the validated inference timeout and stage timing into `postGenerate`;
-3. replace `testConnection` with the metadata GET path using the same WinHTTP routing policy;
-4. compile and verify behavior locally/CI;
-5. only then remove the workflow source-rewrite block and replace it with assertions that fail if source regresses.
+Introduce one capture-scoped state object shared by toolbar Translate and the OCR side panel.
 
-Do not combine Gate A with proxy changes. The earlier `AUTOMATIC_PROXY` path has already produced a Google HTTP response, so routing changes need independent evidence.
+#### B1 — canonical snapshot first
 
-#### Gate A implementation contract after source audit
+The first Gate B patch should be intentionally small: unify ownership of the selected pixels and revision before moving request logic.
 
-The next patch should be deliberately narrow and touch the existing functions rather than introducing a second Gemini client:
+Suggested minimal shape:
 
-- `addFastThinking()` — keep the Gemini 2.5 compatibility branch unchanged; for the 3.x path use `thinkingLevel=low` instead of selecting `minimal` for Flash.
-- `makeBaseRequest()` — keep structured JSON/schema behavior unchanged and add `mediaResolution=MEDIA_RESOLUTION_MEDIUM` only for requests that include PNG image data. Text-only `translateOcrBlocks()` should not carry image-resolution settings.
-- `postGenerate()` — keep `WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY` and the current Google host/path unchanged. Split `WinHttpSendRequest` and `WinHttpReceiveResponse` error handling so logs identify whether failure occurred while sending or waiting. Restore a realistic inference receive ceiling (60 s is the v0.8.3 diagnostic baseline), but do not treat the ceiling as a latency target.
-- `testConnection()` — stop constructing a prompt and stop calling `postGenerate()`. Perform a lightweight authenticated `GET /v1beta/models/{modelId}` using the same host, headers and WinHTTP access policy. A 2xx response proves key/model/network reachability without paying inference latency.
-- `HttpResult` / `TestResult` — keep the current public result shape for this gate unless timing cannot be surfaced without a small additive field. Avoid changing OCR/UI call sites in the same patch.
+```cpp
+struct CaptureSnapshot {
+    uint64_t revision{0};
+    int width{0};
+    int height{0};
+    std::vector<BYTE> bgra;
+};
 
-Verification assertions for the workflow after source parity lands:
+struct CaptureSession {
+    CaptureSnapshot source;
+    // Derived fields are added in B2/B3 after snapshot ownership is proven stable.
+};
+```
 
-- fail if production source contains `thinkingLevel` with `minimal` for the 3.x Flash path;
-- fail if `testConnection()` contains the `Reply with exactly OK` prompt;
-- fail if production source lacks `MEDIA_RESOLUTION_MEDIUM` for image requests;
-- fail if production source lacks separate send/wait diagnostic strings;
-- fail if the workflow still rewrites these behaviors instead of merely checking them.
+Rules for B1:
 
-This gives Gate A a clean rollback boundary: if the next binary behaves differently, the regression is in transport/request configuration, not OCR-panel state or translated-image rendering.
+- one function creates/replaces the canonical snapshot from the active selection;
+- moving/resizing/replacing source pixels increments `revision` exactly once;
+- opening/closing the OCR panel, toggling Original/Translation, copying text, moving the floating toolbar, or changing focus does **not** increment revision;
+- toolbar and OCR window receive the same session/snapshot reference instead of each copying the selection independently;
+- the canonical BGRA buffer is immutable for the lifetime of a revision; translated rendering always uses a separate overlay/bitmap;
+- long-screenshot completion replaces the snapshot and increments revision once, rather than treating every intermediate stitched frame as a new translation target.
 
-**Exit condition:** local and CI builds contain identical Gemini production behavior and the workflow no longer rewrites production request code.
+B1 deliberately does **not** deduplicate Gemini calls yet. Its exit condition is simply that both UI paths can prove they are looking at the same revision and same source dimensions/pixels.
 
-### Gate B — shared revision cache
+#### B2 — shared derived cache
 
-Introduce one capture-scoped state object keyed by `(captureRevision, model, targetLanguage)`.
+After B1 is stable, add derived data to `CaptureSession`:
 
-Required fields:
+```cpp
+struct OcrCacheEntry {
+    uint64_t revision{0};
+    std::wstring model;
+    std::wstring text;
+    std::vector<GeminiClient::OcrBlock> blocks;
+};
 
-- canonical BGRA pixels and dimensions;
-- monotonically increasing capture revision;
-- OCR text/boxes;
-- translation text/boxes;
-- rendered translated overlay/bitmap;
-- in-flight request descriptor;
-- timing diagnostics.
+struct TranslationCacheEntry {
+    uint64_t revision{0};
+    std::wstring model;
+    std::wstring targetLanguage;
+    std::wstring translatedText;
+    std::vector<GeminiClient::TranslationBlock> blocks;
+};
+```
 
 Rules:
 
-- toolbar Translate on a fresh selection starts one combined image OCR+translation request;
-- OCR-first then Translate reuses OCR blocks and uses text-only translation when possible;
-- equivalent simultaneous toolbar/panel requests attach to one in-flight operation;
-- panel close/reopen and Original/Translation toggles generate zero requests;
-- any source-pixel/selection change invalidates derived results and makes stale callbacks no-ops.
+- cache keys include revision plus model; translation also includes target language;
+- source snapshot is never invalidated by model/language changes; only derived entries are;
+- closing/reopening the OCR panel reuses cached entries;
+- Original/Translation toggles only change presentation state and never mutate cache identity.
 
-**Exit condition:** one request per revision for equivalent work, stale result cannot paint onto a newer selection, and reopening the OCR panel is instant.
+#### B3 — one in-flight operation per equivalent request
+
+Only after B1/B2, add request sharing. Use a small descriptor rather than a second networking layer:
+
+```cpp
+enum class CaptureRequestKind { OcrImage, TranslateImage, TranslateText };
+
+struct InFlightCaptureRequest {
+    uint64_t requestId{0};
+    uint64_t revision{0};
+    CaptureRequestKind kind{};
+    std::wstring model;
+    std::wstring targetLanguage;
+};
+```
+
+Request policy:
+
+- toolbar Translate on a fresh selection starts one combined image OCR+translation request;
+- OCR-first then Translate reuses valid OCR blocks and sends text-only translation when possible;
+- if toolbar and OCR panel request equivalent work for the same revision/model/language while a request is already running, the second UI consumer attaches to the existing operation instead of starting another Gemini call;
+- completion updates `CaptureSession` only when both `requestId` and `revision` still match;
+- a revision change invalidates the active derived view immediately; an older callback may finish but becomes a silent no-op;
+- Retry creates a new request id for the current revision without destroying valid original pixels or cached local OCR.
+
+Avoid storing UI pointers in the session. Notify views through weak callbacks/event dispatch so closing the OCR panel while a request is running cannot create a dangling callback.
+
+**Gate B exit condition:** one canonical selection snapshot, one revision counter, one derived cache, at most one equivalent in-flight Gemini operation, and stale results cannot paint onto a newer selection.
 
 ### Gate C — OCR side-panel isolation
 
@@ -104,6 +137,8 @@ Treat the panel as a real input surface layered above capture hit testing.
 - opening/closing the panel does not increment capture revision;
 - closing restores focus to capture without cancelling it;
 - panel width is stable and text wraps inside the panel.
+
+Additional acceptance rule after Gate B: panel creation/destruction must not own or destroy `CaptureSession`; the active capture surface owns the session lifecycle.
 
 **Exit condition:** repeated text selection/copy and tab switching never changes the capture rectangle on Windows 10 22H2 at 100%, 125% and 150% display scaling.
 
@@ -140,19 +175,23 @@ For a normal desktop screenshot, record locally:
 
 Optimization priority is `waitResponseMs` first, then image payload size/encode. Do not trade correctness for an artificial short timeout. After TranslationReady, Original/Translation switching should be local and effectively immediate.
 
+Gate B should reduce avoidable latency/cost by preventing duplicate image uploads; it should not attempt to make Gemini itself faster.
+
 ## Long screenshot checkpoint
 
 Do not send the full-resolution stitched image blindly. Keep original pixels for save/copy, but create a network copy and tile vertically when needed. Tiles overlap enough to catch text crossing boundaries; returned boxes are remapped into global coordinates and duplicate lines are merged by overlap/text similarity.
 
-This comes only after Gates A–D, so long-capture complexity cannot hide basic request/cache bugs.
+This comes only after Gates B–D, so long-capture complexity cannot hide basic request/cache bugs.
 
-## Test order for the next binary
+## Test order for the next Gate B binary
 
-1. Settings → Test connection: verify model name and elapsed milliseconds.
-2. Screenshot → Translate: record first total and wait-response time.
+1. Settings → Test connection: quick regression check only; Gate B should not change Gemini transport.
+2. Screenshot → Translate: record first total time and verify translation still works.
 3. Toggle Original/Translation repeatedly: confirm zero additional network requests.
 4. Start Translate, then move/resize selection before response: old result must be discarded.
-5. Open OCR panel, select text, Ctrl+C, switch tabs and close/reopen: selection must remain unchanged and cached results must remain.
-6. Repeat on Windows 10 22H2 at 125% scaling.
+5. Open OCR panel before/after translation: verify it shows the same revision and reuses the same cached source/result.
+6. Close/reopen OCR panel: no new OCR/translation request for an unchanged revision.
+7. Trigger toolbar Translate and panel Translate close together: confirm one equivalent request, not two.
+8. Repeat panel text-selection/copy tests on Windows 10 22H2 at 125% scaling before starting R2 rendering.
 
 Only after these pass should the next binary add R2 rendering changes.
