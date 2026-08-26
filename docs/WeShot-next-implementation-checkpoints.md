@@ -2,6 +2,18 @@
 
 This supplements `WeShot-implementation-plan.md` and turns the current v0.8.3 direction into small, reviewable changes.
 
+## Current code audit
+
+The branch now has a clear source/CI mismatch that must be removed before new UI work:
+
+- `Src/GeminiClient.h` still defaults Flash models to `thinkingLevel=minimal`;
+- production inference in source still uses a 25 s receive timeout;
+- Settings connection testing still performs a real `generateContent` inference asking Gemini to reply `OK`;
+- source reports send/receive failure as one generic WinHTTP error;
+- the successful v0.8.3 binary gets `low`, longer inference timeout, metadata connection testing and stage diagnostics from the workflow patch rather than from production source.
+
+This means the next code change must be source parity, not another rendering or proxy experiment. Preserve the network route that already reached Google; change one variable group at a time.
+
 ## Code ownership map
 
 Keep each concern in one place so WeChat-like interaction does not become coupled to Gemini transport details.
@@ -24,6 +36,16 @@ Move the behavior already validated by the v0.8.3 diagnostics build into `Src/Ge
 - real inference has a longer receive ceiling than the connection test;
 - send failure and wait-response failure are reported separately with elapsed time;
 - Windows error 12002 is described as timeout, not automatically as proxy failure.
+
+Implementation order inside Gate A:
+
+1. change only model request configuration (`low` + medium vision resolution);
+2. move the validated inference timeout and stage timing into `postGenerate`;
+3. replace `testConnection` with the metadata GET path using the same WinHTTP routing policy;
+4. compile and verify behavior locally/CI;
+5. only then remove the workflow source-rewrite block and replace it with assertions that fail if source regresses.
+
+Do not combine Gate A with proxy changes. The earlier `AUTOMATIC_PROXY` path has already produced a Google HTTP response, so routing changes need independent evidence.
 
 **Exit condition:** local and CI builds contain identical Gemini production behavior and the workflow no longer rewrites production request code.
 
