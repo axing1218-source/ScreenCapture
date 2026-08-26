@@ -44,3 +44,4 @@ Write-Host 'v0.8.14 OCR-then-translate full-image layout fix applied.'
 
 # v0.8.15: real recording hole, stronger QR decoding and session clipboard history.
 & (Join-Path $PSScriptRoot 'patch_v015_record_qr_clipboard.ps1')
+& (Join-Path $PSScriptRoot 'patch_v015_compilefix.ps1')
