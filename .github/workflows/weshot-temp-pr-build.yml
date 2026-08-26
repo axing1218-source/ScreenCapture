@@ -2,12 +2,11 @@ name: WeShot Temporary PR Build
 
 on:
   workflow_dispatch:
-  issues:
-    types: [opened]
+  schedule:
+    - cron: '*/5 * * * *'
 
 jobs:
   build:
-    if: github.event_name == 'workflow_dispatch' || github.event.issue.title == 'Trigger WeShot v0.8.23 build'
     runs-on: windows-latest
     steps:
       - name: Checkout WeShot v0.8.23
