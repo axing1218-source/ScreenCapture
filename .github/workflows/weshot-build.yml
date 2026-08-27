@@ -54,11 +54,11 @@ jobs:
           $proj = $proj.Replace(';D:\sdk\gifski\target\release\gifski.lib', '')
           Set-Content Src\ScreenCapture.vcxproj $proj -Encoding utf8
 
-      - name: Patch Gemini diagnostics
+      - name: Patch Gemini transport diagnostics
         shell: pwsh
         run: |
           $gemini = Get-Content Src\GeminiClient.h -Raw
-          $gemini = $gemini.Replace('L"WeShot/0.8"', 'L"WeShot/0.8.3"')
+          $gemini = $gemini.Replace('L"WeShot/0.8"', 'L"WeShot/0.8.24-T1"')
           $gemini = $gemini.Replace('model.find(L"flash") != std::wstring::npos ? L"minimal" : L"low"', 'L"low"')
           $gemini = $gemini.Replace('WinHttpSetTimeouts(session, 8000, 8000, 15000, 25000);', 'WinHttpSetTimeouts(session, 7000, 7000, 15000, 60000);')
 
@@ -97,12 +97,6 @@ jobs:
           if (-not $gemini.Contains($oldSend)) { throw 'Could not locate send/receive block.' }
           $gemini = $gemini.Replace($oldSend, $newSend)
 
-          $tokenLine = '        generation.SetNamedValue(L"maxOutputTokens", JsonValue::CreateNumberValue(maxOutputTokens));'
-          $mediaLine = '        generation.SetNamedValue(L"mediaResolution", JsonValue::CreateStringValue(L"MEDIA_RESOLUTION_MEDIUM"));'
-          if ($gemini.Contains($tokenLine) -and -not $gemini.Contains('L"mediaResolution"')) {
-            $gemini = $gemini.Replace($tokenLine, $tokenLine + "`r`n" + $mediaLine)
-          }
-
           $testLines = @(
             '    inline TestResult testConnection(const std::wstring& apiKey, const std::wstring& model)',
             '    {',
@@ -110,7 +104,7 @@ jobs:
             '        if (apiKey.empty()) { out.message = L"Gemini API Key 为空。"; return out; }',
             '        const auto modelId = model.empty() ? std::wstring(L"gemini-3.7-flash") : model;',
             '        const ULONGLONG started = GetTickCount64();',
-            '        HINTERNET session = WinHttpOpen(L"WeShot/0.8.3-Test", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,',
+            '        HINTERNET session = WinHttpOpen(L"WeShot/0.8.24-T1-Test", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,',
             '            WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);',
             '        if (!session) { out.message = L"测试连接：无法初始化网络。"; return out; }',
             '        WinHttpSetTimeouts(session, 7000, 7000, 10000, 15000);',
@@ -165,7 +159,7 @@ jobs:
           $verified = Get-Content Src\GeminiClient.h -Raw
           if (-not $verified.Contains('std::wstring path = L"/v1beta/models/" + modelId;')) { throw 'models.get test missing.' }
           if (-not $verified.Contains('等待 Gemini 响应失败')) { throw 'stage diagnostics missing.' }
-          if (-not $verified.Contains('L"mediaResolution"')) { throw 'media resolution missing.' }
+          if ($verified.Contains('L"mediaResolution"')) { throw 'T1 must not alter image mediaResolution.' }
 
       - name: Patch translation UI
         shell: pwsh
