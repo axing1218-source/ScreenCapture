@@ -4,12 +4,12 @@
 The v0.8.23 OCR geometry work is the stable baseline. Before changing side-panel behavior, shared cache ownership, or WeChat-like rendering, restore deterministic Gemini transport behavior in production source so latency/failure results are meaningful.
 
 ## Verified current-source gap
-`Src/GeminiClient.h` on `weshot-v0.8.23` still has four production-source mismatches:
+`Src/GeminiClient.h` on `weshot-v0.8.23` still has three transport-source mismatches and one separate quality-tuning question:
 
 - `postGenerate()` uses a 25 s receive timeout and merges send/receive failures into one generic WinHTTP error.
-- `addFastThinking()` can send `minimal` for Flash instead of the supported low-latency `low` setting used by the validated build path.
-- `makeBaseRequest()` does not explicitly request medium image resolution for screenshot requests.
+- `addFastThinking()` can send `minimal` for Flash instead of the validated low-latency `low` setting.
 - `testConnection()` performs generation (`Reply with exactly OK`) instead of a lightweight model-metadata request.
+- Screenshot image resolution is not explicitly configured. This is now treated as a post-T1 quality/latency A/B decision, not a transport fix.
 
 These are independent of the newer Windows OCR geometry code and should be fixed without touching that OCR path.
 
@@ -23,9 +23,11 @@ Change only `GeminiClient.h` and the Settings connection-test behavior.
 
 ### T1.2 `makeBaseRequest()`
 - Keep structured JSON response/schema behavior unchanged.
-- When `png != nullptr && !png->empty()`, add `mediaResolution="MEDIA_RESOLUTION_MEDIUM"` to `generationConfig`.
-- Do not add image-resolution configuration to text-only `translateOcrBlocks()` requests.
-- Preserve current max-output-token limits so this gate measures transport/model latency rather than changing output behavior at the same time.
+- Do **not** force `mediaResolution` in T1.
+- Preserve current max-output-token limits so this gate measures transport/model latency rather than changing vision quality at the same time.
+- Keep text-only `translateOcrBlocks()` behavior unchanged.
+
+Reason: v0.8.23 already has a useful OCR-quality baseline. Forcing `MEDIA_RESOLUTION_MEDIUM` during the transport fix would mix two variables. Screenshot resolution will be A/B tested after T1 using the same fixed small-text/mixed-language sample set.
 
 ### T1.3 `postGenerate()`
 Keep the existing `WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY` route. Do not introduce a second proxy implementation in this gate.
@@ -56,6 +58,9 @@ with the same `x-goog-api-key` header. On HTTP 2xx, show a compact success resul
 
 The connection test may use a shorter receive ceiling than inference because it is metadata-only; it must still distinguish send vs wait-response failure.
 
+### T1.5 API surface stays frozen
+Do not migrate `generateContent` to the newer Interactions API in the same commit. API migration is a separate A/B gate after transport behavior is stable. This avoids confusing endpoint differences with timeout, proxy, or model-latency regressions.
+
 ## T1 invariants
 The T1 commit must not change:
 
@@ -67,9 +72,11 @@ The T1 commit must not change:
 - translated-image background repair/text fitting;
 - long-screenshot tiling;
 - annotation behavior;
-- proxy UI/settings.
+- proxy UI/settings;
+- screenshot vision resolution;
+- Gemini API family (`generateContent` remains the T1 baseline).
 
-Keeping these frozen makes regressions attributable to Gemini transport rather than UI or OCR changes.
+Keeping these frozen makes regressions attributable to Gemini transport rather than UI, OCR, or API-surface changes.
 
 ## Gate T1 acceptance
 - Settings connection test returns model metadata quickly and never invokes generation.
@@ -77,9 +84,28 @@ Keeping these frozen makes regressions attributable to Gemini transport rather t
 - A real screenshot translation can wait up to the 60 s inference ceiling without freezing the UI thread.
 - Errors distinguish `send` from `wait-response` and include elapsed milliseconds.
 - HTTP/API failures preserve Google's response message.
-- Screenshot requests use low thinking + medium image resolution; text-only OCR-block translation uses low thinking without unnecessary image-resolution config.
+- Non-2.5 requests use `thinkingLevel=low`.
+- Screenshot resolution behavior is unchanged from the current v0.8.23 baseline during T1.
 - Windows/local OCR remains usable if Gemini fails.
-- Existing v0.8.23 OCR placement and paragraph grouping are byte-for-byte behaviorally unchanged.
+- Existing v0.8.23 OCR placement and paragraph grouping are behaviorally unchanged.
+
+## Gate Q1 — screenshot vision-resolution A/B
+Run only after T1 passes. Use the same fixed screenshots and compare the default resolution behavior against explicit `MEDIA_RESOLUTION_MEDIUM` and `MEDIA_RESOLUTION_HIGH` where supported.
+
+Measure:
+- small-text OCR recall;
+- mixed Chinese/English reading order;
+- box alignment;
+- translation completeness;
+- request latency;
+- request payload/response cost when observable.
+
+Decision rule: prefer the lowest-cost resolution that does not materially regress the v0.8.23 OCR baseline. Do not optimize latency by sacrificing small-text accuracy; request reuse and text-only translation are the preferred speed wins.
+
+## Gate A1 — API-surface A/B
+After T1 and Q1 are stable, compare the current `generateContent` path against the Interactions API as a separate experiment. Keep prompts, image input, model, resolution choice, and test screenshots fixed so only the API surface changes.
+
+Do not switch production behavior unless the newer path is at least as reliable for structured OCR/translation and provides a measurable latency, diagnostics, or maintenance benefit.
 
 ## Next gates after T1
 ### T2 — capture-scoped session
@@ -171,4 +197,5 @@ Use one fixed screenshot for A/B comparison:
 7. Start translation, then resize the capture before Gemini returns; verify the old callback is discarded and never paints on the new revision.
 8. On the same revision, trigger toolbar Translate and side-panel Translate close together; verify only one Gemini request is sent.
 9. Test mixed-DPI/negative-coordinate multi-monitor placement; translated boxes must remain aligned with the physical-pixel capture.
-10. Compare a flat UI background and a photographic background; verify R2 never damages non-text content outside the detected text regions.
+10. After T1 passes, run Q1 resolution A/B on the same screenshots before changing production resolution defaults.
+11. Compare a flat UI background and a photographic background; verify R2 never damages non-text content outside the detected text regions.
