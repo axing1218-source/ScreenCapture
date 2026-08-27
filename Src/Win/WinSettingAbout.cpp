@@ -3,6 +3,7 @@
 #include "WinSetting.h"
 #include "WinSettingAbout.h"
 #include "../Util.h"
+#include "../Version.h"
 
 WinSettingAbout::WinSettingAbout(Ling::WinBase* parent):Ling::Node(parent)
 {
@@ -23,9 +24,9 @@ WinSettingAbout::WinSettingAbout(Ling::WinBase* parent):Ling::Node(parent)
         auto btn = box->makeChild<Ling::Button>();
         btn->setId(key);
         if (key == L"version") {
-            auto ver = Ling::Util::getVerNum();
-            auto verStr = std::format(L"{}.{}.{}", ver[0], ver[1], ver[2]);
-            btn->setText(verStr);
+            // User-facing WeShot version, intentionally independent from the
+            // original upstream ScreenCapture 2.5.x numbering scheme.
+            btn->setText(WESHOT_DISPLAY_VERSION);
         }
         else if (key == L"project") {
             btn->setText(L"github.com/xland/ScreenCapture");
