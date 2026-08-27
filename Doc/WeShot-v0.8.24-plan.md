@@ -38,6 +38,28 @@ Rules:
 
 Acceptance: test connection reports success/failure quickly and a real screenshot translation cannot fail only because the client imposed the old 25 s ceiling.
 
+### Gate 1 implementation boundary
+
+Apply the transport fix as one isolated source commit before any UI/cache/rendering changes:
+
+1. Keep `WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY`; do not introduce another proxy path in this gate.
+2. In the real `generateContent` path, use short resolve/connect/send limits and a 60 s receive limit.
+3. Split `WinHttpSendRequest` and `WinHttpReceiveResponse` into separate checks. Preserve the Windows error code and record elapsed milliseconds for each phase.
+4. Change `Test connection` to `GET /v1beta/models/{model}` with the same API host, API key header and WinHTTP access type as production requests. It must not consume inference tokens.
+5. The test result should include the selected model and elapsed milliseconds on success, so a user screenshot can distinguish API/model problems from slow inference.
+6. Keep transport diagnostics out of the normal toolbar; surface them only in Settings/test status and failure text.
+7. Do not alter OCR prompts, schemas, translation prompts, paragraph mapping or rendering in this commit.
+
+Transport regression cases:
+
+- invalid API key -> fast HTTP/API error, not a 60 s wait;
+- valid key/model -> metadata test returns quickly without generating text;
+- slow but valid screenshot inference -> allowed to exceed 25 s without client-side 12002 solely from the old receive ceiling;
+- send failure and receive timeout -> visibly different messages with elapsed time;
+- existing Windows automatic-proxy behavior -> unchanged.
+
+After this source commit passes CI, tag its artifact as the new Gemini transport test baseline. Only then begin the shared capture-state work.
+
 ## Gate 2 - OCR geometry as the single layout source
 
 - Treat v0.8.23 multiscale Windows OCR geometry as the canonical local text-region map.
@@ -92,6 +114,8 @@ Measure these phases separately instead of treating “translation time” as on
 
 Keep these timings in debug/status output only; they should not clutter the normal screenshot toolbar.
 
+For transport builds, record `send_ms` and `wait_ms` independently before adding broader phase timing. This gives a clean before/after comparison without conflating Gemini inference latency with local OCR or drawing time.
+
 ## Regression test matrix
 
 Each functional build should cover at least:
@@ -109,10 +133,11 @@ Each functional build should cover at least:
 
 ## Immediate implementation order
 
-1. Restore stable Gemini transport in `GeminiClient.h` on the v0.8.23 baseline.
-2. Add the shared capture-state/cache keyed by capture revision.
-3. Route the OCR side panel and toolbar `译` action through that shared state and coalesce duplicate requests.
-4. Add local paragraph grouping and translated-image rendering.
-5. Add phase timings and run the regression matrix before further latency tuning.
+1. Restore stable Gemini transport in `GeminiClient.h` on the v0.8.23 baseline, using the isolated Gate 1 boundary above.
+2. Build and test that transport-only commit before touching screenshot state.
+3. Add the shared capture-state/cache keyed by capture revision.
+4. Route the OCR side panel and toolbar `译` action through that shared state and coalesce duplicate requests.
+5. Add local paragraph grouping and translated-image rendering.
+6. Add the remaining phase timings and run the regression matrix before further latency tuning.
 
 Do not mix network changes with rendering changes in the same commit; each gate should remain independently testable.
