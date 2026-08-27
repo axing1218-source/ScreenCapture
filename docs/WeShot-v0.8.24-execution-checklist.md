@@ -2,6 +2,24 @@
 
 This checklist turns the current transport/session/rendering plan into buildable, independently testable slices. The goal is to keep the v0.8.23 Windows OCR geometry baseline stable while moving toward WeChat-like in-place translation.
 
+## Current source audit — 2026-08-27
+
+The active `weshot-v0.8.23` branch still has the old Gemini transport behavior in `Src/GeminiClient.h`: Flash models select `thinkingLevel=minimal`, inference uses a 25 s receive timeout, send/receive failures collapse into one generic WinHTTP error, and Settings tests connectivity by running a small inference that asks Gemini to reply `OK`.
+
+The branch itself is build-clean: Windows x64 CI run 160 completed successfully at commit `a2485f5`. Therefore Slice 1 should be treated as a transport-only source change against a known-good OCR/UI baseline; no screenshot media-resolution or OCR geometry changes should be mixed into it.
+
+### Slice 1 implementation order
+
+Apply the transport changes in this order so failures remain attributable:
+
+1. change non-2.5 `thinkingLevel` to `low` only;
+2. restore inference receive timeout to 60 s while leaving resolve/connect/send limits unchanged;
+3. split `WinHttpSendRequest` and `WinHttpReceiveResponse` diagnostics and record elapsed ms for each stage;
+4. replace Settings inference-based `OK` test with `GET /v1beta/models/{modelId}` using the same host, API-key header, and automatic-proxy policy;
+5. compile and run the fixed regression sequence before changing image resolution or API family.
+
+Do not introduce proxy overrides, `MEDIA_RESOLUTION_*`, Interactions API, capture-session work, or renderer changes in the same commit.
+
 ## Slice 1 — Gemini transport only
 
 Change `Src/GeminiClient.h` and Settings connection-test behavior only.
