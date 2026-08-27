@@ -72,3 +72,5 @@ Write-Host 'v0.8.15 clipboard layout compile fix applied.'
 & (Join-Path $PSScriptRoot 'patch_v093_compilefix.ps1')
 # v0.9.4: search-first uTools header + direct translation Escape exit.
 & (Join-Path $PSScriptRoot 'patch_v094_clipboard_search_escape.ps1')
+# v0.9.5: deterministic search placeholder + right uTools rail + continuous translation dim state.
+& (Join-Path $PSScriptRoot 'patch_v095_utools_side_rail_loading.ps1')
