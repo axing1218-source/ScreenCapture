@@ -167,6 +167,36 @@ For the OCR side panel, mouse input is considered panel-owned from the initial b
 
 For WeChat-like translation rendering, the first production pass should intentionally prefer a slightly imperfect local background fill over destructive inpainting. R2 should modify only detected text regions; stronger photo inpainting is a later opt-in refinement after flat UI screenshots are stable.
 
+## Slice 1 transport result contract
+
+The current `HttpResult` only carries `status`, `body`, and a formatted error string. Before changing UI messages, Slice 1 should first make the transport result machine-readable so Settings and screenshot translation consume the same diagnostics instead of parsing text.
+
+Recommended minimal shape:
+
+- `TransportErrorKind errorKind` with values `none`, `send_failed`, `wait_failed`, `http_error`, `read_failed`, `parse_error`;
+- `DWORD win32Error` for WinHTTP failures;
+- `DWORD status` for HTTP status;
+- `ULONGLONG sendMs` and `waitMs`;
+- response `body` unchanged;
+- optional human-readable `error` produced only at the UI boundary.
+
+`postGenerate()` and the lightweight model-info connection test should share one small request helper for WinHTTP session creation, API-key headers, timeout policy, send/wait timing, status extraction, and body reading. The helper may accept method/path/body and a receive-timeout argument; it must not know whether the caller is OCR, translation, or Settings.
+
+This avoids two likely regressions:
+
+1. Settings connection test accidentally using a different proxy/header/timeout path than real inference;
+2. later Interactions A/B work duplicating another ad-hoc WinHTTP implementation.
+
+For body reads, a `WinHttpReadData` failure after a successful response must be classified separately from model wait timeout. A partial JSON body must never fall through as a generic parse error without preserving the original Win32 read failure.
+
+### Slice 1 acceptance logging
+
+A debug build should emit one compact line per request, for example conceptually:
+
+`gemini method=POST model=... status=200 send=12ms wait=1840ms read=3ms total=1860ms error=none`
+
+Do not log API keys, request bodies, screenshot base64, OCR text, translated text, or file-identifying data. This keeps timing diagnostics useful without turning the screenshot tool into a content logger.
+
 ## Priority rule
 
 Do not combine transport, API migration, image-resolution tuning, session/cache ownership, and local rendering in one commit. Each slice must produce a separately attributable Windows x64 build before the next slice starts.
