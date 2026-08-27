@@ -13,6 +13,8 @@ A second audit of `WeShotCaptureTranslate.h` adds two important constraints:
 1. The live translation overlay currently positions itself with `win->x + maskRect.left` / `win->y + maskRect.top`. `CaptureSnapshot::screenOrigin` must preserve that **virtual-desktop screen coordinate** contract. Storing only `maskRect.left/top` would be wrong on a non-zero or negative virtual-desktop origin and would shift overlays on multi-monitor layouts.
 2. Detached Gemini workers currently capture a raw `WinCap*`. B1 should not expand that lifetime hazard. Snapshot bytes may outlive the window, but UI application must still be gated by a weak/session lifetime token plus revision before touching `WinCap` or an overlay.
 
+A fresh audit of the real `WinCap::onUp()` ordering adds one more implementation-critical rule: after Select finishes, `enterByArg()` and the Ctrl-to-pin fast path run **before** the normal `stage = Adjust` / `makeToolCap()` path. Therefore the initial capture revision must be committed immediately after `cutMask->hasRect()` succeeds, before either early-return path. Otherwise `--enter=ocr` can reach OCR with revision 0/no canonical snapshot, which would make command-line OCR behave differently from clicking OCR on the toolbar.
+
 ## Ownership
 
 Add `std::unique_ptr<WeShotCaptureSession> captureSession;` to `WinCap`.
@@ -88,7 +90,7 @@ This removes both duplicated `copyCutPixels()` implementations and keeps the D2D
 
 Revision changes must happen at committed pixel boundaries, not UI events in general.
 
-- Initial Select -> Adjust commit: increment once after the final selection rectangle is established.
+- Initial Select commit: increment once immediately after `cutMask->hasRect()` succeeds, before `enterByArg()` or the Ctrl pin fast path can return. The normal Select -> Adjust transition then reuses that already-committed revision and must not increment a second time.
 - Adjust drag: do not increment on every `onMove`; remember the starting rectangle and increment once in `onUp` only if the final rectangle differs.
 - Entering/leaving OCR, toggling translation, moving the toolbar, selecting text, or hiding an overlay: no revision change.
 - Long screenshot: when a completed long-image bitmap becomes the canonical captured image, publish a new snapshot/revision at that handoff.
@@ -103,7 +105,7 @@ Add one private rectangle field such as `D2D1_RECT_F adjustStartRect{}` and one 
 
 - `onDown()` / `CapStage::Adjust`: immediately before `cutMask->startAdjust(pos)`, save `cutMask->maskRect` to `adjustStartRect` and mark it valid. Do not change the revision here.
 - `onMove()` / `CapStage::Adjust`: continue calling `cutMask->adjust(pos)` and moving the toolbar exactly as today. Do not invalidate the snapshot on every mouse move.
-- `onUp()` / transition `Select -> Adjust`: once `cutMask->hasRect()` succeeds and before `makeToolCap()`, call one commit helper such as `commitCapturePixelsChanged()` so the first stable selection receives a revision.
+- `onUp()` / `CapStage::Select`: after `isPress = false` and after `cutMask->hasRect()` succeeds, call `commitCapturePixelsChanged()` **before** `enterByArg()` and before the Ctrl pin branch. If neither early return is taken, continue to `stage = Adjust`, `refresh()`, and `makeToolCap()` without another commit.
 - `onUp()` / `CapStage::Adjust`: compare the final `cutMask->maskRect` with `adjustStartRect`. Only if the rectangle actually changed, call `commitCapturePixelsChanged()` once. Then clear the saved-start flag.
 - `onClosed()`: expire/reset the lifetime token before deferred destruction so late async callbacks can observe expiry and drop without dereferencing `WinCap`.
 
@@ -177,6 +179,16 @@ B1 should make the smallest possible call-site change:
 
 This boundary is important: B1 centralizes source pixels and source identity only. It does not yet centralize OCR text, translation blocks, display state, or in-flight requests.
 
+### Direct-entry parity requirement
+
+Treat command-line entry as a first-class B1 acceptance path. Today `enterByArg()` can call `startOcr()` directly and return before the normal toolbar is ever created. With the commit ordering above, both paths must observe the same non-zero revision and the same snapshot contract:
+
+- normal: Select -> commit revision -> Adjust -> toolbar -> OCR/Translate;
+- `--enter=ocr`: Select -> commit revision -> `enterByArg()` -> OCR;
+- Ctrl pin: Select -> commit revision -> pin/close (no OCR consumer, but capture identity remains internally consistent until close).
+
+This prevents a hidden split where toolbar OCR uses the shared session but command-line OCR accidentally falls back to legacy readback or revision 0.
+
 ## WeChat-like interaction invariants during B1
 
 B1 is an internal ownership change and must be invisible to normal screenshot interaction:
@@ -195,9 +207,9 @@ These invariants are the bridge between B1 data ownership and the later B2/B3 sh
 1. Add `CaptureSnapshot` and a minimal `WeShotCaptureSession` with revision + memoized snapshot + lifetime token only.
 2. Add a `captureSession` member to `WinCap` and initialize/expire it with `WinCap`.
 3. Route snapshot creation through `WinCap::getCutPixels(...)`; preserve the current BGRA/top-down/tight-row contract.
-4. Add the concrete `onDown/onUp` commit hooks above and verify one revision change per committed selection change.
+4. Add the concrete `onDown/onUp` commit hooks above, including the pre-`enterByArg()` initial commit, and verify one revision change per committed selection change.
 5. Replace `WeShotCaptureTranslate::copyCutPixels()` with `win->captureSnapshot()`, use absolute `snapshot.screenOrigin`, and keep its existing request/overlay state otherwise unchanged.
-6. Replace the OCR path's duplicate readback the same way.
+6. Replace the OCR path's duplicate readback the same way, including `--enter=ocr`.
 7. Add debug logging/assertions showing `revision`, width, height, pixel-buffer address, screen origin, and snapshot cache hit/miss.
 8. Add one multi-monitor regression case with the capture window at a negative virtual-desktop origin.
 
@@ -206,6 +218,7 @@ Only after these steps compile and pass the baseline interaction test should B2 
 ## B1 acceptance tests
 
 - Toolbar Translate and OCR opened on the same unchanged selection observe the same revision, dimensions, screen origin, and pixel buffer identity.
+- `--enter=ocr` observes the same first committed revision/snapshot contract as toolbar OCR.
 - Repeated Original/Translation toggles do not create a new snapshot or revision.
 - Opening/closing the OCR panel does not create a new snapshot or revision.
 - Adjusting the selection without releasing the mouse does not increment revision repeatedly.
