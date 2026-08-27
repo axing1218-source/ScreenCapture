@@ -45,7 +45,9 @@ $patched = [regex]::Replace($src, $themePattern, $themeReplacement, 1)
 if ($patched -eq $src) { throw 'v0.9.6 theme replacement failed' }
 $src = $patched
 
-$railPattern = '(?s)    inline int sideRailWidth\(\).*?\r?\n\r?\n    inline RECT tabRect\(int index\)'
+$railStart = $src.IndexOf('    inline int sideRailWidth()')
+$railEnd = $src.IndexOf('    inline RECT tabRect(int index)', $railStart)
+if ($railStart -lt 0 -or $railEnd -lt 0 -or $railEnd -le $railStart) { throw 'v0.9.6 rail boundaries missing' }
 $railReplacement = @'
     inline int sideRailWidth() { return 72; }
 
@@ -148,11 +150,8 @@ $railReplacement = @'
         }
     }
 
-    inline RECT tabRect(int index)
 '@
-$patched = [regex]::Replace($src, $railPattern, $railReplacement, 1)
-if ($patched -eq $src) { throw 'v0.9.6 rail replacement failed' }
-$src = $patched
+$src = $src.Substring(0, $railStart) + $railReplacement + $src.Substring($railEnd)
 
 $tabPattern = '(?s)    inline RECT tabRect\(int index\)\r?\n    \{.*?\r?\n    \}\r?\n\r?\n    inline RECT themeButtonRect'
 $tabReplacement = @'
