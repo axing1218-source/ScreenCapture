@@ -85,14 +85,79 @@ Keeping these frozen makes regressions attributable to Gemini transport rather t
 ### T2 — capture-scoped session
 Introduce one capture-scoped object containing revision, immutable BGRA pixels, OCR geometry/text, translation result, translated overlay cache, and in-flight request state. Selection changes invalidate derived state once per committed revision.
 
+The session should be owned by the active capture window rather than a process-global singleton. A minimal shape is:
+
+- `revision`: monotonic capture identity;
+- `snapshot`: immutable BGRA pixels + width/height + absolute virtual-screen origin;
+- `ocr`: local OCR blocks/paragraphs for the revision;
+- `translation`: translated text + geometry for the revision;
+- `overlay`: locally rendered translated bitmap/cache;
+- `requestState`: none / OCR pending / translation pending / ready / error;
+- `lifetimeToken`: lets background callbacks prove the capture window is still alive.
+
+A selection resize/move should hide any translated overlay immediately for responsiveness, but increment revision only once when the new rectangle is committed. Derived OCR/translation/overlay state belongs to one revision and must never migrate to another.
+
 ### T3 — request reuse
 Make toolbar Translate and the OCR side panel share the same capture session. If reliable local OCR already exists for the current revision, translation should prefer text-only `translateOcrBlocks()` instead of uploading the screenshot again. Concurrent callers for the same revision should join one in-flight request.
+
+Request reuse key should include at least `(revision, targetLanguage, requestKind)`. A second caller should attach a waiter to the same future/result rather than start another HTTP request. A completed translation is cached until revision or target language changes.
+
+Every async completion must pass both checks before touching UI:
+
+1. `lifetimeToken` still valid;
+2. callback revision equals current session revision.
+
+If either fails, discard the result silently.
 
 ### T4 — OCR side-panel isolation
 The OCR panel must own mouse-down through mouse-up for text selection/scrolling and consume relevant keyboard input (`Ctrl+C`, selection navigation, wheel), so no event reaches `CutMask::startAdjust()` or screenshot hotkeys while the side panel is handling it.
 
+Interaction rules:
+
+- entering the panel does not change capture revision;
+- clicking/dragging text never arms screenshot move/resize;
+- wheel scroll is consumed by the panel when the pointer is over it;
+- `Ctrl+C` copies selected OCR/translation text only;
+- `Esc` first clears panel-local selection/focus when appropriate, and only then falls back to capture cancel behavior;
+- switching Original/Translated text tabs is local state only and never triggers a new Gemini call;
+- closing/reopening the panel for the same revision reuses cached OCR/translation data.
+
 ### R2 — WeChat-like local rendering
 Gemini returns text and geometry only. WeShot reconstructs translated imagery locally: sample background around text-region edges rather than averaging the entire text box, remove/cover source glyphs, estimate source foreground contrast, fit DirectWrite text by box size/line count, and keep Original/Translation switching as a local zero-network operation.
+
+Rendering pipeline:
+
+1. expand each OCR/text rectangle slightly and sample a thin ring just outside it;
+2. estimate background from robust edge statistics (median/cluster), not the glyph-filled center;
+3. fill/repair the source text region locally;
+4. estimate foreground luminance/contrast from the original text neighborhood;
+5. lay out translated text with DirectWrite using the original box width, paragraph alignment, and line-count target;
+6. shrink font size only when measured layout overflows; do not stretch text horizontally;
+7. cache the finished overlay bitmap per revision so Original/Translated toggles are instant.
+
+For complex/photo backgrounds, R2 should prefer a conservative soft fill/blur over an aggressive inpainting algorithm at first; correctness and speed matter more than perfect reconstruction. A later R3 can add stronger local inpainting if needed.
+
+## WeChat-like interaction contract
+The screenshot window should behave as one continuous surface rather than opening a second translation workflow:
+
+- toolbar `译` starts translation in-place and changes to a clear pending state;
+- translation success replaces only detected text regions while preserving the rest of the screenshot exactly;
+- after success, the same control toggles Original ↔ Translated locally;
+- OCR side panel and toolbar always reflect the same revision and translation state;
+- moving/resizing the screenshot immediately returns the visible image to Original and invalidates old derived results;
+- annotation tools remain usable on the currently visible image, but annotation changes must not alter OCR/translation cache identity unless the product explicitly decides to OCR annotated pixels in a later version.
+
+## Performance instrumentation
+Do not measure Gemini as one opaque duration. Record compact stage timings so latency tuning remains evidence-based:
+
+- snapshot/PNG encode;
+- request construction/base64;
+- WinHTTP send;
+- wait for response headers/model inference;
+- response read/JSON parse;
+- local overlay render.
+
+Only show concise user-facing timing such as total translation duration; keep stage timings in debug/log output. This will separate network/model latency from local rendering cost without adding visual noise.
 
 ## Test sequence
 Use one fixed screenshot for A/B comparison:
@@ -102,3 +167,8 @@ Use one fixed screenshot for A/B comparison:
 3. Toggle Original/Translation repeatedly; verify zero extra requests.
 4. Run OCR on the same screenshot; verify v0.8.23 small-text boxes, paragraph grouping, and reading order are unchanged.
 5. Test one invalid API key; confirm the API error is explicit and local OCR still works.
+6. Open the OCR side panel and drag-select/copy/scroll text; verify the screenshot rectangle never moves or resizes.
+7. Start translation, then resize the capture before Gemini returns; verify the old callback is discarded and never paints on the new revision.
+8. On the same revision, trigger toolbar Translate and side-panel Translate close together; verify only one Gemini request is sent.
+9. Test mixed-DPI/negative-coordinate multi-monitor placement; translated boxes must remain aligned with the physical-pixel capture.
+10. Compare a flat UI background and a photographic background; verify R2 never damages non-text content outside the detected text regions.
