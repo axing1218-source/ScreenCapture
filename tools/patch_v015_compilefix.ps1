@@ -74,3 +74,5 @@ Write-Host 'v0.8.15 clipboard layout compile fix applied.'
 & (Join-Path $PSScriptRoot 'patch_v094_clipboard_search_escape.ps1')
 # v0.9.5: deterministic search placeholder + right uTools rail + continuous translation dim state.
 & (Join-Path $PSScriptRoot 'patch_v095b_utools_side_rail_loading.ps1')
+# v0.9.6: current official uTools palette/spacing + correct hover/selection behavior.
+& (Join-Path $PSScriptRoot 'patch_v096_utools_exact_visual.ps1')
