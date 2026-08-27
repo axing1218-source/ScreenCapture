@@ -69,3 +69,4 @@ Write-Host 'v0.8.15 clipboard layout compile fix applied.'
 & (Join-Path $PSScriptRoot 'patch_v092_compilefix.ps1')
 # v0.9.3: current official uTools-style layout and interactions + real preview window + explicit theme switch.
 & (Join-Path $PSScriptRoot 'patch_v093_clipboard_official.ps1')
+& (Join-Path $PSScriptRoot 'patch_v093_compilefix.ps1')
