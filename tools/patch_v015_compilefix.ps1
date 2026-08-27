@@ -64,6 +64,8 @@ Write-Host 'v0.8.15 clipboard layout compile fix applied.'
 & (Join-Path $PSScriptRoot 'patch_v090_foundation.ps1')
 # v0.9.1: high-fidelity uTools-style clipboard manager prototype.
 & (Join-Path $PSScriptRoot 'patch_v091_clipboard_utools.ps1')
-# v0.9.2: improve image readability, full preview zoom, hover explanations and stronger uTools-style color hierarchy.
+# v0.9.2: image readability / zoom / compile compatibility.
 & (Join-Path $PSScriptRoot 'patch_v092_clipboard_visual.ps1')
 & (Join-Path $PSScriptRoot 'patch_v092_compilefix.ps1')
+# v0.9.3: current official uTools-style layout and interactions + real preview window + explicit theme switch.
+& (Join-Path $PSScriptRoot 'patch_v093_clipboard_official.ps1')
