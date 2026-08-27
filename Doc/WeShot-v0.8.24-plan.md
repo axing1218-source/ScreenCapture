@@ -60,6 +60,24 @@ Transport regression cases:
 
 After this source commit passes CI, tag its artifact as the new Gemini transport test baseline. Only then begin the shared capture-state work.
 
+### Source-audit refinements for Gate 1
+
+The current source was rechecked before implementation. `postGenerate()` currently combines send and receive into one boolean, uses `WinHttpSetTimeouts(..., 25000)` for receive, and reports every failure as the same `Gemini 网络请求失败` message. `testConnection()` currently performs real inference with `Reply with exactly OK`. `addFastThinking()` also still selects `minimal` for Flash models.
+
+Implement the transport change around one reusable HTTP helper instead of adding a second network stack:
+
+- helper inputs: method, REST path, optional UTF-8 body, API key, timeout profile;
+- helper outputs: HTTP status/body plus `failure_stage`, Win32 error code, `send_ms`, and `wait_ms`;
+- inference profile: short resolve/connect/send timeouts and 60 s receive timeout;
+- metadata-test profile: same host/proxy/header path but a shorter receive timeout because no model generation occurs;
+- API key and request body must never be included in diagnostic text or logs.
+
+The metadata test should call `GET /v1beta/models/{modelId}` directly. A successful test should report `连接成功 · <model> · <elapsed> ms`; an HTTP error should still expose Google's API error message where available.
+
+Do not treat `12002` as proof of a proxy problem. The stage label is required: `send_failed` means the request could not be sent; `wait_failed` means the request was sent but no response arrived before the configured receive deadline.
+
+For `gemini-3.7-flash`, keep the model name exactly as configured. Thinking-level compatibility is a request-parameter issue, not a model substitution: do not silently switch to another model. If the current API rejects `minimal`, use the lowest supported level for that same selected model and keep this change isolated from image-resolution experiments.
+
 ## Gate 2 - OCR geometry as the single layout source
 
 - Treat v0.8.23 multiscale Windows OCR geometry as the canonical local text-region map.
@@ -69,6 +87,16 @@ After this source commit passes CI, tag its artifact as the new Gemini transport
 - Prefer text-only translation when local OCR is already available and its geometry passes confidence/coverage checks; use image-to-text Gemini only as a fallback for OCR-poor screenshots.
 
 Acceptance: the same screenshot produces stable paragraph bounds across Original/Translated toggles and no second OCR pass is needed when only the language view changes.
+
+### OCR-to-translation decision rule
+
+To keep latency predictable, select one path per capture revision:
+
+1. If local OCR produced usable blocks and paragraph geometry, send only paragraph text to Gemini and reuse local boxes for translated rendering.
+2. If local OCR produced text but geometry coverage is poor, keep the recognized text for the side panel but allow image-based Gemini translation for layout recovery.
+3. If local OCR returned no useful text, fall back to Gemini image OCR/translation.
+
+Do not run local OCR and Gemini image OCR a second time merely because the user toggles `原文/译文`. The selected path and results belong to the capture revision cache.
 
 ## Gate 3 - WeChat-like screenshot interaction
 
@@ -80,6 +108,17 @@ Acceptance: the same screenshot produces stable paragraph bounds across Original
 
 Acceptance: `截图 -> 译 -> 原文 -> 译` stays in the same capture surface, and the second/third toggles perform no network request.
 
+### Interaction-state refinement
+
+Use a small explicit state machine instead of button-text heuristics:
+
+- `Original`
+- `Translating`
+- `Translated`
+- `TranslationError`
+
+`译` from `Original` starts or joins the request for the current revision. While `Translating`, another click must not create a duplicate request. When `Translated`, the button becomes the local `原文` toggle; switching back to translated view reuses the cached rendered surface. A committed rectangle change immediately returns the state to `Original` for the new revision.
+
 ## Gate 4 - OCR side panel isolation
 
 - The OCR panel owns mouse-down/move/up, wheel, selection and copy gestures inside its bounds.
@@ -90,6 +129,12 @@ Acceptance: `截图 -> 译 -> 原文 -> 译` stays in the same capture surface, 
 
 Acceptance: drag-selecting text, scrolling and Ctrl+C in the panel never change the capture rectangle; toolbar and panel show the same source/translated text for one capture.
 
+### Side-panel event routing refinement
+
+Hit-test the OCR panel before capture-adjust logic on mouse-down. Once a mouse-down begins inside the panel, mark the entire gesture as panel-owned until mouse-up, even if the pointer leaves the panel bounds during text selection. This prevents `CutMask::startAdjust()` from being armed underneath the panel.
+
+Wheel and text-selection events should terminate inside the panel. Keyboard routing should first check text-control focus before executing capture shortcuts. Closing the panel only changes presentation state; it must not clear the shared OCR/translation cache.
+
 ## Gate 5 - local translated-image rendering
 
 - Remove source text locally using region-aware background sampling/inpainting; do not generate a replacement image with Gemini.
@@ -99,6 +144,16 @@ Acceptance: drag-selecting text, scrolling and Ctrl+C in the panel never change 
 - Start with deterministic edge sampling + fill for flat UI backgrounds; only add heavier inpainting for regions where edge-color variance indicates a non-flat background.
 
 Acceptance: translated text stays aligned to the original paragraph positions, backgrounds avoid obvious solid rectangles on simple UI screenshots, and toggling has no visible recomputation delay.
+
+### WeChat-like rendering refinement
+
+For each paragraph region, create a slightly expanded repair region and sample pixels from a narrow ring outside the detected glyph/paragraph bounds. Use edge variance to choose the repair strategy:
+
+- low variance: robust median/clustered edge color fill;
+- moderate variance: directional interpolation from opposite edges;
+- high variance/photo background: defer to the heavier inpainting path rather than painting an obvious solid rectangle.
+
+DirectWrite layout should preserve the paragraph's dominant alignment when it can be inferred; otherwise default to left alignment for multiline text and centered alignment only for short single-line UI labels. Fit text by decreasing font size within a bounded range before truncating. Rendering must be deterministic so cached translated surfaces remain pixel-stable across toggles.
 
 ## Performance instrumentation
 
@@ -130,6 +185,11 @@ Each functional build should cover at least:
 - OCR side-panel text selection + wheel + Ctrl+C,
 - repeated `译 -> 原文 -> 译` toggles with no second network request,
 - secondary monitor / negative virtual-desktop coordinates when available.
+
+Add two transport-specific checks to every Gate 1 artifact:
+
+- `测试连接` must finish without invoking generation and show model + elapsed time;
+- a controlled receive timeout must identify the failure as waiting-for-response rather than the generic network error.
 
 ## Immediate implementation order
 
