@@ -105,7 +105,7 @@ $tr = $patched
 $keyHandler = @'
             onKeyDown.add([this](UINT key) {
                 if (key != VK_ESCAPE) return;
-                auto* target = captureOwner;
+                auto* target = this->captureOwner;
                 hide();
                 // Do not destroy this overlay from inside its own key callback. Queue the
                 // capture close; WinCap's destroy hook then resets the translation state.
@@ -173,6 +173,7 @@ $trVerify = Get-Content $translatePath -Raw
 foreach ($needle in @(
     'WinCap* captureOwner',
     'if (key != VK_ESCAPE) return;',
+    'auto* target = this->captureOwner;',
     'WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_TRANSPARENT',
     'std::move(result.blocks), border, win'
 )) {
