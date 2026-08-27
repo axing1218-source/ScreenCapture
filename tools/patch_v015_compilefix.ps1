@@ -59,3 +59,6 @@ Write-Host 'v0.8.15 clipboard layout compile fix applied.'
 & (Join-Path $PSScriptRoot 'patch_v023_multiscale_ocr.ps1')
 & (Join-Path $PSScriptRoot 'patch_v022_wrapper.ps1')
 & (Join-Path $PSScriptRoot 'patch_v023_wrapper.ps1')
+
+# v0.9.0: central version era + configurable clipboard-window toggle shortcut.
+& (Join-Path $PSScriptRoot 'patch_v090_foundation.ps1')
