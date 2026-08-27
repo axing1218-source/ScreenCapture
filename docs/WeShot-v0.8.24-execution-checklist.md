@@ -146,6 +146,27 @@ Use the same small-text, mixed Chinese/English screenshot for every build:
 10. Only after transport/session gates pass, A/B default vs Medium vs High image resolution.
 11. Only after that, A/B `generateContent` vs Interactions API with all other variables fixed.
 
+## Slice ownership map and diagnostics contract
+
+To keep the WeChat-like interaction path debuggable, each slice now has a single owner and a strict error boundary:
+
+- `GeminiClient.h` owns HTTP transport, model request construction, response parsing, and transport timings only. It must not know about screenshot-window lifetime, OCR panel focus, or translated-overlay visibility.
+- `WinCap` owns capture identity: current selection rectangle, immutable snapshot, virtual-screen origin, and monotonic `revision`.
+- The OCR result window owns text selection, scrolling, copy, and Original/Translated text presentation, but it never owns capture identity.
+- The translated-image renderer owns background repair, text fitting, and the cached overlay bitmap; it never starts network requests.
+
+Transport errors should be classified before they reach UI:
+
+1. `send_failed` — `WinHttpSendRequest` failed before a response could be awaited;
+2. `wait_failed` — request was sent but `WinHttpReceiveResponse` failed or timed out;
+3. `http_error` — Google returned a non-2xx status such as invalid key/model;
+4. `parse_error` — transport succeeded but the response body could not be parsed into the expected schema;
+5. `stale_result` — response was valid but capture lifetime/revision no longer matches, so it is silently discarded rather than shown as a user-facing error.
+
+For the OCR side panel, mouse input is considered panel-owned from the initial button-down until the matching button-up. Once a gesture begins inside the panel, moving outside the panel during text selection must still not fall through to `CutMask::startAdjust()`. This mirrors normal desktop text-surface behavior and removes a subtle selection-resize race.
+
+For WeChat-like translation rendering, the first production pass should intentionally prefer a slightly imperfect local background fill over destructive inpainting. R2 should modify only detected text regions; stronger photo inpainting is a later opt-in refinement after flat UI screenshots are stable.
+
 ## Priority rule
 
 Do not combine transport, API migration, image-resolution tuning, session/cache ownership, and local rendering in one commit. Each slice must produce a separately attributable Windows x64 build before the next slice starts.
