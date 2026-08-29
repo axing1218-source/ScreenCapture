@@ -105,3 +105,45 @@ A build is S1-testable only when all of these are true:
 8. `--enter=ocr` works even when `ToolCap` was never created.
 
 Gemini and translated overlay are deliberately excluded from S1 so screenshot interaction regressions can be isolated from networking and layout work.
+
+## Concrete event-order corrections from current source
+
+The current `CutMask::startAdjust()` contract is important: pressing an edge/corner may change `maskRect` immediately, before any mouse-move event. Therefore the pre-adjust rectangle must be captured **before** calling `cutMask->startAdjust(pos)`. Capturing it in `onMove()` or on release is already too late for click-to-snap edge changes.
+
+The current `WinCap::onUp()` Adjust branch only clears `isPress`; `CutMask` has no separate release/finalize step. Therefore the correct release sequence is:
+
+```cpp
+else if (stage == CapStage::Adjust) {
+    isPress = false;
+    if (adjustStartRectValid && !samePhysicalRect(adjustStartRect, cutMask->maskRect))
+        invalidateCaptureSessionForSelectionChange();
+    adjustStartRectValid = false;
+}
+```
+
+`samePhysicalRect()` must compare integer physical-pixel edges (`left/top/right/bottom`), not only width/height. Moving an unchanged-size rectangle is still a different OCR source.
+
+The existing Adjust `onMove()` should remain limited to `cutMask->adjust(pos)`, toolbar relayout, and repaint. Do not cancel/restart OCR per mouse-move; this avoids request storms while preserving the current smooth resize path.
+
+## `--enter=ocr` and null-tool contract
+
+`--enter=ocr` may enter OCR directly after the initial selection, before `makeToolCap()` creates a toolbar. S1 code must therefore treat `toolCap == nullptr` as valid while OCR is active. In particular:
+
+- OCR entry must not require `toolCap` to exist;
+- panel positioning should be derived from `cutMask->maskRect` and screen work area, not from toolbar bounds;
+- selection-adjust code may relayout the toolbar only when `toolCap` exists;
+- closing the OCR panel must not create a toolbar implicitly; returning focus to `WinCap` is enough.
+
+This keeps command-line OCR behavior independent from the normal toolbar path and avoids a null dereference when users adjust a direct-enter selection.
+
+## S1 source landing order
+
+Land the first functional implementation in small compile-safe steps:
+
+1. Add `CaptureSession`, `CaptureLifetime`, physical-rect comparison, and invalidation plumbing with no UI behavior change.
+2. Add `WinOcrPanel` as a separate top-level Ling tool window with placeholder text only; verify focus/shortcut isolation.
+3. Change `startOcr()` to create/reuse one session from exactly one `getCutPixels()` call and keep `WinCap` open.
+4. Wire one OCR worker and UI-dispatch completion guarded by lifetime + revision + request id.
+5. Only after S1 passes, add Gemini translation and translated overlay rendering.
+
+This order intentionally keeps screenshot interaction regressions separable from OCR-engine failures and network failures.
