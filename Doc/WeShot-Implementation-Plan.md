@@ -45,18 +45,45 @@ struct CaptureSession {
 
 Do not keep pointers into temporary pixel buffers. `CaptureSession::bgra` owns the selected image for the whole OCR/translation lifetime.
 
+## Selection mutation and invalidation
+
+The screenshot selection remains editable after OCR opens, so selection changes must explicitly invalidate OCR/translation state.
+
+- Cache the cut rectangle (or a monotonically increasing selection generation) when the session snapshot is created.
+- Any committed move/resize that changes the selected rectangle marks the current session stale immediately.
+- Do not recapture continuously during mouse move. Keep xland's interaction hot path untouched; only invalidate on the committed selection change.
+- A stale panel may remain visible, but it must switch to a `Selection changed - run OCR again` state and must not offer Translate for old blocks.
+- The next OCR click performs exactly one new `getCutPixels()` snapshot, increments `revision`, cancels/abandons old OCR and Gemini work, and reuses the existing panel window.
+- Translation overlay is hidden as soon as the source selection becomes stale.
+
+This prevents old text/geometry from being painted over a newly moved or resized selection while avoiding expensive screenshot copies during drag.
+
 ## `startOcr()` target flow
 
 1. Require `CapStage::Adjust` and a valid selection.
-2. Call `getCutPixels()` exactly once.
-3. Create/replace the session snapshot and increment `revision`.
-4. Keep `WinCap` alive; do not call `close()`.
-5. Open/show the OCR side panel in a Loading state.
-6. Start one whole-image OCR job using the session BGRA data.
-7. On matching-revision completion, store `blocks + plainText` once and refresh the side panel.
-8. Translation uses those same OCR blocks; it must never launch a second OCR pass.
+2. If the existing session still matches the current selection and OCR is `Running` or `Ready`, focus/show the existing side panel and do not duplicate work.
+3. Otherwise call `getCutPixels()` exactly once.
+4. Create/replace the session snapshot and increment `revision`.
+5. Keep `WinCap` alive; do not call `close()`.
+6. Open/show the OCR side panel in a Loading state.
+7. Start one whole-image OCR job using the session BGRA data.
+8. On matching-revision completion, store `blocks + plainText` once and refresh the side panel.
+9. Translation uses those same OCR blocks; it must never launch a second OCR pass.
 
 The old external `Util::openWithImageReader()` path can remain behind a compatibility/fallback flag until the new OCR path is proven stable.
+
+## Async lifetime and UI-thread rule
+
+Background OCR and Gemini work must never retain or dereference a raw `WinCap*` after dispatch.
+
+- Worker requests capture only immutable request data plus `{window/session token, revision}`.
+- Completion is posted/marshaled back to the capture UI thread before mutating `CaptureSession`, panel state, or invalidating paint.
+- On the UI thread, completion first verifies that `WinCap` is still alive, the session token still matches, and `revision` is current.
+- `WinCap::close()`/destruction cancels active request contexts, invalidates the lifetime token, and detaches/closes the OCR panel before capture resources are released.
+- Late worker callbacks after close/cancel are allowed to arrive, but must become no-ops after token/revision validation.
+- Exactly one terminal state may be published by each OCR/Gemini request.
+
+This keeps HWND/D2D/UI objects single-threaded and removes use-after-free risk when a screenshot is dismissed while network/OCR work is still running.
 
 ## Side panel behavior
 
@@ -68,7 +95,8 @@ Requirements:
 - the screenshot host keeps all existing selection hit-testing behavior;
 - closing the panel returns to the normal Adjust state without destroying the screenshot selection;
 - while OCR is running, repeated OCR clicks should focus/show the existing panel rather than start duplicate work for the same revision;
-- panel UI state is derived from `CaptureSession`, not kept as an independent source of truth.
+- panel UI state is derived from `CaptureSession`, not kept as an independent source of truth;
+- when the screenshot selection changes, panel content is marked stale rather than silently continuing to represent the previous rectangle.
 
 Recommended first layout: original recognized text in one scrollable column with Copy and Translate actions. Translation can either replace a secondary column or appear beneath each source block after the basic panel is stable.
 
@@ -80,6 +108,7 @@ The overlay must consume the same `OcrBlock::rectPx` geometry produced by the si
 - map to screenshot-window coordinates only at paint time using the current selection origin/scale;
 - do not persist DPI-scaled rectangles;
 - overlay should be non-interactive by default so it never steals selection drag/resize input;
+- hide the overlay immediately when the session is invalidated by a selection change;
 - if source and translation block counts do not match, fall back to panel-only translated text rather than guessing geometry.
 
 ## DPI and multi-monitor rule
@@ -98,15 +127,18 @@ All callbacks also carry the originating `CaptureSession::revision`; late result
 
 ## Incremental implementation order
 
-1. Add `CaptureSession` model and ownership to `WinCap` without changing visible behavior.
-2. Change `startOcr()` to snapshot the selected BGRA image into the session and keep `WinCap` open.
-3. Add a minimal OCR panel shell showing Loading/Failed/Ready states.
-4. Wire one whole-image OCR pass and populate `blocks/plainText`.
-5. Add Copy and Translate actions.
-6. Wire Gemini translation with full-request deadline/cancellation and revision guards.
-7. Add non-interactive translated-block overlay.
-8. Run DPI/multi-monitor and stale-result/cancellation regression tests.
+1. Add `CaptureSession` model, selection-generation tracking, and ownership to `WinCap` without changing visible behavior.
+2. Add session invalidation on committed selection move/resize; no image copy on mouse-move hot path.
+3. Change `startOcr()` to snapshot the selected BGRA image into the session and keep `WinCap` open.
+4. Add a minimal OCR panel shell showing Loading/Failed/Ready/Stale states.
+5. Wire one whole-image OCR pass and populate `blocks/plainText`, with UI-thread completion marshaling and lifetime/revision guards.
+6. Add Copy and Translate actions.
+7. Wire Gemini translation with full-request deadline/cancellation and the same lifetime/revision guards.
+8. Add non-interactive translated-block overlay.
+9. Run DPI/multi-monitor, selection-stale, window-close, duplicate-click, and cancellation regression tests.
 
 ## First testable milestone
 
-The first useful build should stop before Gemini: click OCR -> screenshot remains open -> side panel appears -> one OCR pass fills recognized text -> selection drag/resize behavior still matches the original capture tool. This milestone isolates screenshot/UI regressions from Gemini networking issues.
+The first useful build should stop before Gemini: click OCR -> screenshot remains open -> side panel appears -> one OCR pass fills recognized text -> selection drag/resize behavior still matches the original capture tool -> changing the selection marks the old OCR result stale instead of reusing it.
+
+This milestone isolates screenshot/UI regressions from Gemini networking issues and verifies the lifetime/invalidation model before translation is added.
