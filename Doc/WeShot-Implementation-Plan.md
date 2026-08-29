@@ -142,3 +142,49 @@ All callbacks also carry the originating `CaptureSession::revision`; late result
 The first useful build should stop before Gemini: click OCR -> screenshot remains open -> side panel appears -> one OCR pass fills recognized text -> selection drag/resize behavior still matches the original capture tool -> changing the selection marks the old OCR result stale instead of reusing it.
 
 This milestone isolates screenshot/UI regressions from Gemini networking issues and verifies the lifetime/invalidation model before translation is added.
+
+## Concrete `WinCap` hooks for the first code patch
+
+The current mouse flow gives us a cleaner invalidation hook than observing every `CutMask::adjust()` call:
+
+1. In `WinCap::onDown()` while `stage == CapStage::Adjust`, copy `cutMask->maskRect` into an `adjustStartRect` member immediately before `cutMask->startAdjust(pos)`.
+2. Leave `WinCap::onMove()` unchanged apart from the existing visual/tool positioning work. In particular, do not increment revisions, cancel workers, copy pixels, or notify the OCR panel from this hot path.
+3. In `WinCap::onUp()` while `stage == CapStage::Adjust`, compare the final `cutMask->maskRect` with `adjustStartRect`. Only if the physical-pixel rectangle actually changed, call a small `invalidateCaptureSessionForSelectionChange()` helper.
+4. That helper marks the current snapshot stale, cancels/abandons OCR and Gemini request contexts, clears/hides translated overlay state, and tells the already-open panel to render Stale. It does **not** call `getCutPixels()` and does not create the next revision yet.
+5. The next `startOcr()` call is the sole place that snapshots the new pixels and increments the revision.
+
+Use exact integerized rectangle edges for the comparison because `maskRect` represents physical screenshot pixels in this window. This avoids stale invalidation from insignificant floating-point formatting differences.
+
+### Recommended ownership surface
+
+Keep the first patch small and explicit in `WinCap`:
+
+```cpp
+std::unique_ptr<CaptureSession> captureSession;
+std::unique_ptr<WinOcrPanel> ocrPanel;
+D2D1_RECT_F adjustStartRect{};
+uint64_t nextCaptureRevision{1};
+std::shared_ptr<CaptureLifetime> captureLifetime;
+```
+
+`CaptureLifetime` should contain only thread-safe cancellation/liveness primitives; it must not expose HWND, D2D objects, `CutMask`, or raw `WinCap*` to workers.
+
+The panel should receive UI-thread notifications such as `showLoading(revision)`, `showReady(revision)`, `showFailed(revision, message)`, and `showStale(revision)`. These are view updates only; the canonical OCR/translation data stays in `CaptureSession`.
+
+### UI completion dispatch
+
+Use the application's existing UI dispatcher (`Ling::App::get()->dq.TryEnqueue(...)`) as the single completion bridge for both OCR and Gemini. A worker completion should enqueue a lambda containing immutable result data plus the lifetime token/revision; the lambda then resolves the live `WinCap` through the global owner only after checking the lifetime token, and finally re-checks `captureSession->revision` before publishing results.
+
+This matches the existing delayed-disposal pattern already used by `WinCap::onClosed()` and avoids introducing a second window-message or dispatcher mechanism solely for WeShot.
+
+### Close ordering for WeShot
+
+At the beginning of `WinCap::onClosed()`:
+
+1. invalidate the capture lifetime token;
+2. cancel active OCR/Gemini contexts;
+3. close/detach `ocrPanel`;
+4. clear translation overlay/session UI references;
+5. then continue the existing `capVideo`, `capLong`, `toolCap`, and deferred `winCap.reset()` path.
+
+With that order, an in-flight worker may still finish its own cleanup, but it cannot publish into a window that is being destroyed.
