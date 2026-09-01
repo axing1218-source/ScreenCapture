@@ -1,80 +1,97 @@
-[简体中文](https://github.com/xland/ScreenCapture/) | English | [Русский](./ReadMe.ru-RU.md) | [Bahasa Indonesia](./ReadMe.id-ID.md)
+# StarCap
 
-![banner](./banner.png)
+<p align="center">
+  <img src="../Assets/Branding/starcap-logo-master-1024.png" alt="StarCap" width="180">
+</p>
 
-**ScreenCapture** A powerful and lightweight Windows screenshot tool.
+<p align="center">
+  <strong>A lightweight, modern screenshot and visual productivity tool for Windows.</strong>
+</p>
+
+<p align="center">
+  <a href="../ReadMe.md">简体中文</a> | English
+</p>
+
+## About StarCap
+
+**StarCap** is an open-source Windows screenshot and visual productivity tool. It starts with fast screen capture and brings annotation, scrolling capture, screen recording, OCR, AI-assisted translation, QR recognition, and clipboard workflows into one application.
+
+Starting with **v0.9.7**, the project adopts the StarCap name, branding, and an independent maintenance roadmap.
+
+- Project: **StarCap**
+- Author / Maintainer: **阿星**
+- Current development version: **v0.9.7**
+- Platform: Windows
+- Contact: GitHub `axing1218-source`
 
 ## Features
 
-- Screenshot, drawing annotations, scrolling screenshot (long screenshot), screen recording (GIF/MP4), text recognition (OCR), QR code recognition.
-- Color picker, supports shortcut keys to copy RGB color (`Ctrl+R`), HEX color (`Ctrl+H`) and CMYK color (`Ctrl+K`).
-- Draw ellipses, perfect circles (hold `Shift`), rectangles, squares (hold `Shift`), arrows, numbered labels, etc.
-- Draw curves, straight lines (hold `Shift`), mosaic, eraser, text.
-- Modify or delete drawn elements at any time (hover the mouse over an element).
-- Undo (`Ctrl+Z`), redo (`Ctrl+Y`), save to file (`Ctrl+S`), save to clipboard (`Ctrl+C` or double-click).
-- Fast performance with low memory usage.
-- Small size, a single executable file, no installation required, does not depend on any dynamic link libraries (except for text recognition).
-- Supports a variety of command-line arguments for launching a specified function directly.
-- Supports one-time execution mode (the process will not remain resident in the system).
-- Multi-language support.
+- Region capture and image annotation
+- Rectangle, ellipse, arrow, line, text, numbering, mosaic, and eraser tools
+- Pin-to-screen image window
+- Scrolling / long screenshots
+- GIF / MP4 screen recording
+- OCR text recognition
+- Gemini-assisted translation
+- QR code recognition
+- RGB / HEX / CMYK color picking
+- Clipboard history and quick viewing
+- Undo, redo, save, and copy
+- Multi-language support
+- Command-line entry modes
 
-## Download
+## Command-line entry points
 
-[Release](https://github.com/xland/ScreenCapture/releases/) (1MB)
-
-## Supported Operating Systems
-
-- Windows 10 1607 or Later
-
-## Compilation
-
-- The main branch depends on the [Ling](https://github.com/xland/Ling) GUI framework.
-- The project can be compiled with Visual Studio 2026 (installed with the C++ Desktop Development Kit).
-- [2.4.25 (based on D2D)](https://github.com/xland/ScreenCapture/tree/2.4.25) and [2.3.3 (based on Qt)](https://github.com/xland/ScreenCapture/tree/2.3.3_qt) are the previous stable branches.
-
-## Command Line
-
-```
-// Terminate the process immediately after the capture is finished.
-> ScreenCapture.exe --auto-quit=true
-
-// Skip the toolbar once the region is selected and go straight into the specified feature:
-// long = scrolling capture (long screenshot)
-> ScreenCapture.exe --enter=long
-// video = screen recording
-> ScreenCapture.exe --enter=video
-// ocr = text recognition
-> ScreenCapture.exe --enter=ocr
-// qr = QR code recognition
-> ScreenCapture.exe --enter=qr
-
-// The two arguments can be combined, for example: no tray icon, and the process quits right after the long screenshot is taken.
-> ScreenCapture.exe --enter=long --auto-quit=true
+```text
+StarCap.exe --auto-quit=true
+StarCap.exe --enter=pin
+StarCap.exe --enter=long
+StarCap.exe --enter=video
+StarCap.exe --enter=ocr
+StarCap.exe --enter=qr
+StarCap.exe --enter=tray
 ```
 
-## Text Recognition (OCR) Plugin
+> v0.9.7 is currently in the project-independence transition. Some internal project filenames and compatibility paths may temporarily retain historical names and will be migrated incrementally.
 
-Download the latest version of the text recognition tool [ImageReader.exe](https://github.com/xland/ImageReader/releases) (about 25MB), place this file in the same directory as ScreenCapture.exe, or in the `%appdata%\ScreenCapture\plugin` directory, then restart the application to use it.
+## Building
 
-## Sponsor
+StarCap is currently a Windows C++ project built with Visual Studio / MSBuild. The codebase still depends on third-party components such as Ling. Reproducible builds and dependency cleanup are part of the v0.9.7 roadmap.
 
-<table>
-  <tr>
-    <td align="center">
-      <img alt="Alipay Sponsor" src="./alipay.jpg" width="160" height="160">
-      <p>Alipay Sponsor</p>
-    </td>
-    <td align="center">
-      <img alt="WeChat Sponsor" src="./wechat.png" width="160" height="160">
-      <p>WeChat Sponsor</p>
-    </td>
-    <td align="center">
-      <img alt="Author WeChat" src="./author.jpg" width="160" height="160">
-      <p>Author WeChat</p>
-    </td>
-    <td align="center">
-      <img alt="Official Account QR Code" src="./gongzhonghao.jpg" width="160" height="160">
-      <p>WeChat Blog: Desktop Software</p>
-    </td>
-  </tr>
-</table>
+## Open source and third-party software
+
+StarCap is independently maintained, while parts of the codebase and implementation lineage come from other open-source projects. Copyright notices, license texts, and required attribution are preserved.
+
+See:
+
+- [`LICENSE`](../LICENSE)
+- [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)
+
+Preserved attribution does not imply endorsement of StarCap's later modifications, releases, or branding by upstream authors.
+
+## Logo
+
+The StarCap mark is a five-point star made of five separately colored points, divided by transparent separators.
+
+Official logo and Windows icon assets are stored in:
+
+[`Assets/Branding`](../Assets/Branding)
+
+## Project status
+
+`v0.9.7` is the first development version establishing StarCap as a distinct project identity. Current priorities are:
+
+- Unify StarCap branding
+- Remove legacy promotional and personal-contact material
+- Organize licensing and third-party notices
+- Unify application naming, resources, and build artifacts
+- Complete GitHub project independence
+- Continue development without regressing the existing v0.9.6 feature set
+
+## Contributing
+
+Issues, suggestions, and pull requests are welcome through GitHub.
+
+---
+
+**StarCap · 阿星**

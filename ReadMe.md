@@ -1,101 +1,97 @@
-简体中文 | [English](./Doc/ReadMe.en-US.md) | [Русский](./Doc/ReadMe.ru-RU.md) | [Bahasa Indonesia](./Doc/ReadMe.id-ID.md)
+# StarCap
 
-![banner](./Doc/banner.png)
+<p align="center">
+  <img src="Assets/Branding/starcap-logo-master-1024.png" alt="StarCap" width="180">
+</p>
 
-**ScreenCapture** 一个小巧但功能强大的Windows截图工具。
+<p align="center">
+  <strong>轻量、现代的 Windows 截图与视觉效率工具</strong>
+</p>
 
-## 特性
+<p align="center">
+  中文 | <a href="./Doc/ReadMe.en-US.md">English</a>
+</p>
 
-- 截图、绘图标注、滚动截图（截长图）、录屏（GIF/MP4）、文字识别（OCR）、二维码识别。
-- 取景框（拾色器），支持快捷键复制 RGB 颜色（`Ctrl+R`）、 HEX 颜色（`Ctrl+H`）与 CMYK 颜色（`Ctrl+K`）。
-- 绘制椭圆、正圆（按住`Shift`）、矩形、正方形（按住`Shift`）、箭头、标号等。
-- 绘制曲线、直线（按住`Shift`）、马赛克、橡皮擦、文本。
-- 可以随时修改、删除已绘制的元素（鼠标移到元素上）。
-- 撤销（`Ctrl+Z`）、重做（`Ctrl+Y`）、保存为文件（`Ctrl+S`）、保存到剪贴板（`Ctrl+C`或双击）。
-- 运行速度快、内存占用低。
-- 体积小、仅一个可执行文件，无需安装，不依赖任何动态链接库（文字识别除外）。
-- 支持多种命令行参数直接启动指定的功能。
-- 支持用完即走（进程不驻留在系统中）。
-- 多语言支持。
+## 关于 StarCap
 
-## 下载
+**StarCap** 是一个面向 Windows 的开源截图与视觉效率工具。它以快速截图为核心，并整合标注、滚动长截图、录屏、OCR、AI 翻译、二维码识别和剪贴板管理等能力。
 
-[Release](https://github.com/xland/ScreenCapture/releases/) （1MB）
+StarCap 从 **v0.9.7** 开始采用新的项目名称、品牌与维护路线。
 
-## 常用功能与问题
+- 项目：**StarCap**
+- 作者 / 维护者：**阿星**
+- 当前开发版本：**v0.9.7**
+- 平台：Windows
+- 联系方式：GitHub `axing1218-source`
 
-- 按住 `Ctrl键` 框选截图区域后，直接进入图像标记窗口（钉图窗口）
-- 按住 `Ctrl键` 滚动鼠标滚轮可以放大、缩小图像标记窗口（钉图窗口）
-- 长截图拼接不符合预期时，尝试调整截图区域往往能解决问题
-- 如手动下载新版本，则必须退出老版本再启动新版本
+## 功能
 
-## 支持的操作系统
+- 区域截图与截图标注
+- 矩形、圆形、箭头、线条、文本、编号、马赛克与橡皮擦
+- 钉图 / 图像置顶
+- 滚动长截图
+- GIF / MP4 屏幕录制
+- OCR 文字识别
+- Gemini 辅助翻译
+- 二维码识别
+- RGB / HEX / CMYK 取色
+- 剪贴板历史与快速查看
+- 撤销、重做、保存与复制
+- 多语言支持
+- 支持命令行直接进入指定功能
 
-- Windows 10 1803 or Later
+## 快捷启动参数
 
-## 编译
-
-- main分支依赖 [Ling](https://github.com/xland/Ling) GUI 框架.
-- 使用 Visual Studio 2026（With C++ Desktop Dev Kit）即可编译项目。
-- [2.4.25（基于D2D）](https://github.com/xland/ScreenCapture/tree/2.4.25)或 [2.3.3（基于Qt）](https://github.com/xland/ScreenCapture/tree/2.3.3_qt)是以前的稳定分支。
-
-## 命令行
-
-```
-// 截图完成后即退出进程。
-> ScreenCapture.exe --auto-quit=true
-
-// 框选完成后不显示工具条，直接进入指定功能：
-// pin 钉图/图像标记
-> ScreenCapture.exe --enter=pin
-// long 长截图
-> ScreenCapture.exe --enter=long
-// video 屏幕录制
-> ScreenCapture.exe --enter=video
-// ocr 文字识别
-> ScreenCapture.exe --enter=ocr
-// qr 二维码识别
-> ScreenCapture.exe --enter=qr
-// tray 仅注册托盘图标，不执行任何操作
-> ScreenCapture.exe --enter=tray
-
-// 两个参数可以联合使用，比如：不注册托盘图标，截完长图后进程直接退出
-> ScreenCapture.exe --enter=long --auto-quit=true
+```text
+StarCap.exe --auto-quit=true
+StarCap.exe --enter=pin
+StarCap.exe --enter=long
+StarCap.exe --enter=video
+StarCap.exe --enter=ocr
+StarCap.exe --enter=qr
+StarCap.exe --enter=tray
 ```
 
-## 文字识别插件
+> v0.9.7 正处于项目独立化阶段。部分内部工程文件名和兼容路径仍可能保留历史名称，后续版本会逐步完成迁移。
 
-下载最新版本的文字识别工具 [ImageReader.exe](https://github.com/xland/ImageReader/releases) (约25MB) 并把此文件放置到 `%appdata%\ScreenCapture\plugin`目录下，然后重启应用即可使用（或 `ScreenCapture.exe` 同目录下亦可）
+## 构建
 
-## 便携能力
+StarCap 当前为 Windows C++ 项目，使用 Visual Studio / MSBuild 构建。项目仍依赖 Ling 等第三方组件；可重复构建环境与依赖整理是 v0.9.7 的重点工作之一。
 
-默认情况下 ScreenCapture 会从 `%appdata%\ScreenCapture\Lang` 目录下读取配置信息、语言文件及插件。
+## 开源与第三方软件
 
-但用户可以在 `ScreenCapture.exe` 同目录下创建一个 `config.json` 的空文件，重启应用，`ScreenCapture` 即会在此文件中设置配置信息。
+StarCap 是独立维护的开源项目，同时包含或改造自其他开源项目的代码与设计实现。我们保留法律要求的原始版权、许可证和第三方声明。
 
-`ScreenCapture.exe` 同目录下创建一个 `Lang` 子目录，然后把语言文件放置到此目录下，`ScreenCapture` 即会读取此目录下的语言文件。
+详情请查看：
 
-文字识别插件 `ImageReader.exe` 也可以放置在 `ScreenCapture.exe` 同目录下
+- [`LICENSE`](./LICENSE)
+- [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md)
 
-## 赞助
+保留这些声明不代表原上游作者对 StarCap 的后续修改、发布或品牌提供背书。
 
-<table>
-  <tr>
-    <td align="center">
-      <img alt="支付宝赞助" src="./Doc/alipay.jpg" width="160" height="160">
-      <p>支付宝赞助</p>
-    </td>
-    <td align="center">
-      <img alt="微信赞助" src="./Doc/wechat.png" width="160" height="160">
-      <p>微信赞助</p>
-    </td>
-    <td align="center">
-      <img alt="作者微信" src="./Doc/author.jpg" width="160" height="160">
-      <p>作者微信</p>
-    </td>
-    <td align="center">
-      <img alt="公众号二维码" src="./Doc/gongzhonghao.jpg" width="160" height="160">
-      <p>公众号：桌面软件</p>
-    </td>
-  </tr>
-</table>
+## Logo
+
+StarCap 的标志是一枚由五个不同颜色星角组成的五角星，各色区域之间使用透明分隔。
+
+Logo 原件与 Windows 图标资源位于：
+
+[`Assets/Branding`](./Assets/Branding)
+
+## 项目状态
+
+`v0.9.7` 是 StarCap 品牌与开源项目身份正式建立的第一个开发版本。当前阶段优先完成：
+
+- StarCap 品牌统一
+- 原项目宣传与作者联系方式清理
+- 许可证与第三方声明整理
+- 程序名称、资源、构建产物统一
+- GitHub 独立项目化
+- 在不破坏 v0.9.6 已有功能的前提下继续开发
+
+## 贡献
+
+欢迎通过 GitHub 提交 Issue、建议与 Pull Request。
+
+---
+
+**StarCap · 阿星**

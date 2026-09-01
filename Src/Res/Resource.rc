@@ -7,7 +7,7 @@ icon.ttf RCDATA "iconfont.ttf"
 zh-CN RCDATA "../../Lang/简体中文.zh-CN.json"
 en-US RCDATA "../../Lang/English.en-US.json"
 
-// 配置可执行文件产品信息。版本号统一由 Version.h 管理，避免设置页仍显示上游 2.5.x。
+// StarCap executable metadata. Version values are centralized in Version.h.
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION WESHOT_FILE_VERSION
 PRODUCTVERSION WESHOT_FILE_VERSION
@@ -25,13 +25,13 @@ BEGIN
     BEGIN
         BLOCK "080404b0"
         BEGIN
-            VALUE "CompanyName", "LiuXiaoLun"
-            VALUE "FileDescription", "ScreenCapture"
+            VALUE "CompanyName", "阿星"
+            VALUE "FileDescription", "StarCap"
             VALUE "FileVersion", WESHOT_FILE_VERSION_STR
-            VALUE "InternalName", "ScreenCapture.exe"
-            VALUE "LegalCopyright", "Copyright (C) LiuXiaoLun 2023-2026"
-            VALUE "OriginalFilename", "ScreenCapture.exe"
-            VALUE "ProductName", "ScreenCapture"
+            VALUE "InternalName", "StarCap.exe"
+            VALUE "LegalCopyright", "Copyright (C) 阿星 2026"
+            VALUE "OriginalFilename", "StarCap.exe"
+            VALUE "ProductName", "StarCap"
             VALUE "ProductVersion", WESHOT_FILE_VERSION_STR
         END
     END
