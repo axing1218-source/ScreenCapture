@@ -32,24 +32,20 @@ jobs:
           $util = $util.Replace('std::wstring{gen(I, I)...}', 'std::wstring{gen(chars, I, I)...}')
           Set-Content D:\project\Ling\include\Util.h $util -Encoding utf8
 
-          # Ling's stock tray path uses LoadIcon(resource 1), which normally loads
-          # the large application icon and lets Explorer downscale it. StarCap has
-          # a dedicated resource 2 for notification-area optical sizing, so load
-          # the OS small-icon size explicitly and keep resource 1 as a fallback.
+          # Use StarCap resource 2 for the tray and request the OS small-icon size.
+          # Resource 1 remains the normal app/taskbar/file icon.
           $lingAppPath = 'D:\project\Ling\src\App.cpp'
           $lingApp = Get-Content $lingAppPath -Raw
           $oldTrayLine = 'tray->hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(1));'
           if (-not $lingApp.Contains($oldTrayLine)) {
             throw 'Ling tray icon load line changed; StarCap tray patch must be reviewed.'
           }
-          $newTrayCode = @'
-tray->hIcon = (HICON)LoadImageW(GetModuleHandle(nullptr), MAKEINTRESOURCE(2), IMAGE_ICON,
-            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
-        if (!tray->hIcon) {
-            tray->hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(1));
-        }
-'@
-          $lingApp = $lingApp.Replace($oldTrayLine, $newTrayCode.TrimEnd())
+          $newTrayCode = 'tray->hIcon = (HICON)LoadImageW(GetModuleHandle(nullptr), MAKEINTRESOURCE(2), IMAGE_ICON,' + "`r`n" +
+            '            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);' + "`r`n" +
+            '        if (!tray->hIcon) {' + "`r`n" +
+            '            tray->hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(1));' + "`r`n" +
+            '        }'
+          $lingApp = $lingApp.Replace($oldTrayLine, $newTrayCode)
           Set-Content $lingAppPath $lingApp -Encoding utf8
 
       - name: Build Yoga and Ling
