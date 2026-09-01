@@ -26,10 +26,31 @@ jobs:
           New-Item -ItemType Directory -Force D:\project | Out-Null
           if (Test-Path D:\project\Ling) { Remove-Item -Recurse -Force D:\project\Ling }
           git clone --depth 1 https://github.com/xland/Ling.git D:\project\Ling
+
           $util = Get-Content D:\project\Ling\include\Util.h -Raw
           $util = $util.Replace('constexpr auto gen = [](size_t i, size_t idx) {', 'constexpr auto gen = [](std::wstring_view chars, size_t i, size_t idx) {')
           $util = $util.Replace('std::wstring{gen(I, I)...}', 'std::wstring{gen(chars, I, I)...}')
           Set-Content D:\project\Ling\include\Util.h $util -Encoding utf8
+
+          # Ling's stock tray path uses LoadIcon(resource 1), which normally loads
+          # the large application icon and lets Explorer downscale it. StarCap has
+          # a dedicated resource 2 for notification-area optical sizing, so load
+          # the OS small-icon size explicitly and keep resource 1 as a fallback.
+          $lingAppPath = 'D:\project\Ling\src\App.cpp'
+          $lingApp = Get-Content $lingAppPath -Raw
+          $oldTrayLine = 'tray->hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(1));'
+          if (-not $lingApp.Contains($oldTrayLine)) {
+            throw 'Ling tray icon load line changed; StarCap tray patch must be reviewed.'
+          }
+          $newTrayCode = @'
+tray->hIcon = (HICON)LoadImageW(GetModuleHandle(nullptr), MAKEINTRESOURCE(2), IMAGE_ICON,
+            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+        if (!tray->hIcon) {
+            tray->hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(1));
+        }
+'@
+          $lingApp = $lingApp.Replace($oldTrayLine, $newTrayCode.TrimEnd())
+          Set-Content $lingAppPath $lingApp -Encoding utf8
 
       - name: Build Yoga and Ling
         shell: pwsh
@@ -39,10 +60,11 @@ jobs:
           msbuild D:\project\Ling\Ling.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=D:\project\Ling\
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Generate StarCap Windows icon
+      - name: Generate StarCap Windows icons
         shell: pwsh
         run: |
           pwsh -NoProfile -ExecutionPolicy Bypass -File tools\generate_starcap_icon.ps1 -OutputPath Src\Res\logo.ico
+          pwsh -NoProfile -ExecutionPolicy Bypass -File tools\generate_starcap_tray_icon.ps1 -OutputPath Src\Res\tray.ico
 
       - name: Prepare portable GIF build
         shell: pwsh
