@@ -94,6 +94,8 @@ function Convert-BitmapToIconDib {
 
     $width = $Bitmap.Width
     $height = $Bitmap.Height
+    $andStride = [int](([math]::Floor(($width + 31) / 32)) * 4)
+    $andBytes = $andStride * $height
     $stream = [System.IO.MemoryStream]::new()
     $writer = [System.IO.BinaryWriter]::new($stream)
 
@@ -111,7 +113,7 @@ function Convert-BitmapToIconDib {
         $writer.Write([uint32]0)
         $writer.Write([uint32]0)
 
-        # 32-bit BGRA XOR bitmap, bottom-up. Alpha provides the transparency mask.
+        # 32-bit BGRA XOR bitmap, bottom-up. Alpha carries smooth edge transparency.
         for ($y = $height - 1; $y -ge 0; $y--) {
             for ($x = 0; $x -lt $width; $x++) {
                 $pixel = $Bitmap.GetPixel($x, $y)
@@ -122,12 +124,31 @@ function Convert-BitmapToIconDib {
             }
         }
 
+        # Traditional 1-bit AND mask, bottom-up and DWORD-aligned.
+        # Fully transparent pixels are masked out; non-zero alpha pixels rely on BGRA alpha.
+        for ($y = $height - 1; $y -ge 0; $y--) {
+            $maskRow = New-Object byte[] $andStride
+            for ($x = 0; $x -lt $width; $x++) {
+                if ($Bitmap.GetPixel($x, $y).A -eq 0) {
+                    $byteIndex = [int][math]::Floor($x / 8)
+                    $bitIndex = 7 - ($x % 8)
+                    $maskRow[$byteIndex] = $maskRow[$byteIndex] -bor [byte](1 -shl $bitIndex)
+                }
+            }
+            $writer.Write([byte[]]$maskRow)
+        }
+
         $writer.Flush()
         $bytes = $stream.ToArray()
     }
     finally {
         $writer.Dispose()
         $stream.Dispose()
+    }
+
+    $expectedLength = 40 + ($width * $height * 4) + $andBytes
+    if ($bytes.Length -ne $expectedLength) {
+        throw "Unexpected DIB length for ${width}x${height}: $($bytes.Length), expected $expectedLength."
     }
 
     return ,$bytes
@@ -158,7 +179,7 @@ try {
 
     $offset = 6 + (16 * $frames.Count)
 
-    # ICONDIRENTRY table
+    # ICONDIRENTRY table. Width/height byte value 0 means 256 per ICO spec.
     foreach ($frame in $frames) {
         $dimension = if ($frame.Size -eq 256) { 0 } else { $frame.Size }
         $icoWriter.Write([byte]$dimension)
@@ -190,26 +211,56 @@ if ($parent) {
 }
 [System.IO.File]::WriteAllBytes($OutputPath, $icoBytes)
 
-# Structural validation before resource compilation.
+# Deterministic structural validation before resource compilation.
 $check = [System.IO.File]::ReadAllBytes($OutputPath)
 if ($check.Length -lt 150) { throw "Generated icon is unexpectedly small: $($check.Length) bytes" }
 if ([BitConverter]::ToUInt16($check, 0) -ne 0 -or [BitConverter]::ToUInt16($check, 2) -ne 1) {
     throw 'Generated file does not have a valid ICO header.'
 }
-if ([BitConverter]::ToUInt16($check, 4) -ne $sizes.Count) {
-    throw "Generated ICO frame count mismatch. Expected $($sizes.Count)."
+
+$count = [BitConverter]::ToUInt16($check, 4)
+if ($count -ne $sizes.Count) {
+    throw "Generated ICO frame count mismatch. Expected $($sizes.Count), got $count."
 }
 
-$resolved = (Resolve-Path $OutputPath).Path
-foreach ($testSize in @(16, 32, 256)) {
-    $icon = [System.Drawing.Icon]::new($resolved, $testSize, $testSize)
-    try {
-        if ($icon.Width -ne $testSize -or $icon.Height -ne $testSize) {
-            throw "ICO validation failed for ${testSize}x${testSize}."
-        }
+for ($i = 0; $i -lt $sizes.Count; $i++) {
+    $entryOffset = 6 + (16 * $i)
+    $widthByte = [int]$check[$entryOffset]
+    $heightByte = [int]$check[$entryOffset + 1]
+    $decodedWidth = if ($widthByte -eq 0) { 256 } else { $widthByte }
+    $decodedHeight = if ($heightByte -eq 0) { 256 } else { $heightByte }
+    $expected = [int]$sizes[$i]
+
+    if ($decodedWidth -ne $expected -or $decodedHeight -ne $expected) {
+        throw "ICO directory size mismatch at frame $i. Expected ${expected}x${expected}, got ${decodedWidth}x${decodedHeight}."
     }
-    finally {
-        $icon.Dispose()
+
+    $planes = [BitConverter]::ToUInt16($check, $entryOffset + 4)
+    $bpp = [BitConverter]::ToUInt16($check, $entryOffset + 6)
+    $bytesInRes = [BitConverter]::ToUInt32($check, $entryOffset + 8)
+    $imageOffset = [BitConverter]::ToUInt32($check, $entryOffset + 12)
+
+    if ($planes -ne 1 -or $bpp -ne 32) {
+        throw "ICO directory format mismatch at ${expected}px frame."
+    }
+    if (($imageOffset + $bytesInRes) -gt $check.Length) {
+        throw "ICO frame $i points outside the file."
+    }
+
+    $dibHeaderSize = [BitConverter]::ToUInt32($check, [int]$imageOffset)
+    $dibWidth = [BitConverter]::ToInt32($check, [int]$imageOffset + 4)
+    $dibHeight = [BitConverter]::ToInt32($check, [int]$imageOffset + 8)
+    $dibPlanes = [BitConverter]::ToUInt16($check, [int]$imageOffset + 12)
+    $dibBpp = [BitConverter]::ToUInt16($check, [int]$imageOffset + 14)
+
+    if ($dibHeaderSize -ne 40 -or $dibWidth -ne $expected -or $dibHeight -ne ($expected * 2) -or $dibPlanes -ne 1 -or $dibBpp -ne 32) {
+        throw "DIB header mismatch at ${expected}px frame."
+    }
+
+    $andStride = [int](([math]::Floor(($expected + 31) / 32)) * 4)
+    $expectedFrameBytes = 40 + ($expected * $expected * 4) + ($andStride * $expected)
+    if ($bytesInRes -ne $expectedFrameBytes) {
+        throw "ICO frame byte count mismatch at ${expected}px. Expected $expectedFrameBytes, got $bytesInRes."
     }
 }
 
