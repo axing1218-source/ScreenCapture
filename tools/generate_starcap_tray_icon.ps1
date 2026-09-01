@@ -10,21 +10,12 @@ $referenceSize = 1093.0
 $referenceCenter = $referenceSize / 2.0
 $sizes = @(16, 20, 24, 32, 40, 48, 64)
 
-# Tray-specific optical sizing. At 100% Windows normally asks for a 16px
-# small icon. The approved StarCap geometry is intentionally expanded so the
-# coloured mark occupies almost the full notification-area canvas, similar to
-# mature tray applications, while the normal application icon remains unchanged.
-$trayZoom = @{
-    16 = 1.16
-    20 = 1.16
-    24 = 1.16
-    32 = 1.12
-    40 = 1.10
-    48 = 1.08
-    64 = 1.06
-}
-
-$shapes = @(
+# Official full-size StarCap geometry. This remains the source for larger tray
+# frames. Small notification-area frames use a denser optical variant below:
+# the outer footprint is already essentially 16x16, so making the whole mark
+# larger would only clip tips. The optical variant instead widens the five arms
+# and keeps roughly a one-pixel transparent separator between colours.
+$officialShapes = @(
     @{ Color = [Drawing.Color]::FromArgb(255,0,129,253);  Points = @(@(547,100), @(438,418), @(541,575), @(653,421)) },
     @{ Color = [Drawing.Color]::FromArgb(255,249,49,50);  Points = @(@(76,425), @(353,632), @(515,589), @(408,426)) },
     @{ Color = [Drawing.Color]::FromArgb(255,24,180,79);  Points = @(@(1017,425), @(684,426), @(577,589), @(739,632)) },
@@ -32,7 +23,78 @@ $shapes = @(
     @{ Color = [Drawing.Color]::FromArgb(255,254,189,2);  Points = @(@(564,616), @(558,784), @(837,992), @(732,661)) }
 )
 
-function New-StarCapTrayBitmap([int]$Size) {
+$trayColorsClockwise = @(
+    [Drawing.Color]::FromArgb(255,0,129,253),   # blue / top
+    [Drawing.Color]::FromArgb(255,24,180,79),   # green / upper-right
+    [Drawing.Color]::FromArgb(255,254,189,2),   # yellow / lower-right
+    [Drawing.Color]::FromArgb(255,254,114,1),   # orange / lower-left
+    [Drawing.Color]::FromArgb(255,249,49,50)    # red / upper-left
+)
+
+function New-OpticalSmallTrayBitmap([int]$Size) {
+    $bmp = [Drawing.Bitmap]::new($Size, $Size, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
+    $g = [Drawing.Graphics]::FromImage($bmp)
+    try {
+        $g.Clear([Drawing.Color]::Transparent)
+        $g.SmoothingMode = [Drawing.Drawing2D.SmoothingMode]::AntiAlias
+        $g.PixelOffsetMode = [Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+        $g.CompositingQuality = [Drawing.Drawing2D.CompositingQuality]::HighQuality
+        $g.CompositingMode = [Drawing.Drawing2D.CompositingMode]::SourceCopy
+
+        $cx = [double]$Size / 2.0
+        $cy = [double]$Size / 2.0
+        $outerRadius = [double]$Size * 0.485
+        # Larger inner radius makes the star visually heavier without growing
+        # beyond the OS tray-icon rectangle.
+        $innerRadius = [double]$Size * 0.315
+
+        $outer = @()
+        $inner = @()
+        for ($i = 0; $i -lt 5; $i++) {
+            $outerAngle = (-90.0 + ($i * 72.0)) * [Math]::PI / 180.0
+            $innerAngle = (-54.0 + ($i * 72.0)) * [Math]::PI / 180.0
+            $outer += [Drawing.PointF]::new(
+                [float]($cx + ($outerRadius * [Math]::Cos($outerAngle))),
+                [float]($cy + ($outerRadius * [Math]::Sin($outerAngle)))
+            )
+            $inner += [Drawing.PointF]::new(
+                [float]($cx + ($innerRadius * [Math]::Cos($innerAngle))),
+                [float]($cy + ($innerRadius * [Math]::Sin($innerAngle)))
+            )
+        }
+
+        $center = [Drawing.PointF]::new([float]$cx, [float]$cy)
+        for ($i = 0; $i -lt 5; $i++) {
+            $previousInner = ($i + 4) % 5
+            $pts = [Drawing.PointF[]]@(
+                $center,
+                $inner[$previousInner],
+                $outer[$i],
+                $inner[$i]
+            )
+            $brush = [Drawing.SolidBrush]::new($trayColorsClockwise[$i])
+            try { $g.FillPolygon($brush, $pts) } finally { $brush.Dispose() }
+        }
+
+        # Re-cut the five boundaries after filling so the five coloured points
+        # stay visibly separate. About one pixel at 16/20/24px gives a much
+        # denser mark than the full-size logo while preserving the brand idea.
+        $separatorWidth = if ($Size -le 20) { 0.82 } elseif ($Size -le 24) { 0.92 } else { 1.05 }
+        $clearPen = [Drawing.Pen]::new([Drawing.Color]::Transparent, [float]$separatorWidth)
+        try {
+            $clearPen.StartCap = [Drawing.Drawing2D.LineCap]::Flat
+            $clearPen.EndCap = [Drawing.Drawing2D.LineCap]::Flat
+            for ($i = 0; $i -lt 5; $i++) {
+                $g.DrawLine($clearPen, $center, $inner[$i])
+            }
+        }
+        finally { $clearPen.Dispose() }
+    }
+    finally { $g.Dispose() }
+    return $bmp
+}
+
+function New-OfficialTrayBitmap([int]$Size) {
     $bmp = [Drawing.Bitmap]::new($Size, $Size, [Drawing.Imaging.PixelFormat]::Format32bppArgb)
     $g = [Drawing.Graphics]::FromImage($bmp)
     try {
@@ -43,8 +105,8 @@ function New-StarCapTrayBitmap([int]$Size) {
         $g.CompositingMode = [Drawing.Drawing2D.CompositingMode]::SourceCopy
 
         $scale = [double]$Size / $referenceSize
-        $zoom = [double]$trayZoom[$Size]
-        foreach ($shape in $shapes) {
+        $zoom = if ($Size -eq 40) { 1.10 } elseif ($Size -eq 48) { 1.08 } else { 1.06 }
+        foreach ($shape in $officialShapes) {
             $pts = [Drawing.PointF[]]::new($shape.Points.Count)
             for ($i = 0; $i -lt $shape.Points.Count; $i++) {
                 $x = $referenceCenter + (($shape.Points[$i][0] - $referenceCenter) * $zoom)
@@ -57,6 +119,11 @@ function New-StarCapTrayBitmap([int]$Size) {
     }
     finally { $g.Dispose() }
     return $bmp
+}
+
+function New-StarCapTrayBitmap([int]$Size) {
+    if ($Size -le 32) { return New-OpticalSmallTrayBitmap $Size }
+    return New-OfficialTrayBitmap $Size
 }
 
 function Convert-BitmapToIconDib([Drawing.Bitmap]$Bitmap) {
@@ -146,4 +213,4 @@ for ($i = 0; $i -lt $sizes.Count; $i++) {
 
 Write-Host "Generated StarCap tray ICO: $OutputPath"
 Write-Host "Tray frames: $($sizes -join ', ')"
-Write-Host "16/20/24px optical zoom: 116%"
+Write-Host "16/20/24/32px use the denser optical-small StarCap mark"
