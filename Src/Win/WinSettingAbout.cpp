@@ -27,11 +27,13 @@ WinSettingAbout::WinSettingAbout(Ling::WinBase* parent):Ling::Node(parent)
             btn->setText(WESHOT_DISPLAY_VERSION);
         }
         else if (key == L"project") {
-            btn->setText(L"github.com/axing1218-source/ScreenCapture");
+            // Until the repository is detached/renamed to StarCap, show the
+            // maintainer's GitHub profile instead of exposing the legacy repo name.
+            btn->setText(L"github.com/axing1218-source");
             btn->setColor(0x597ef7ff);
             btn->setHoverColor(0x597ef7ff);
             btn->onClick.add([this](Ling::Button* btn) {
-                std::wstring projectUrl{ L"https://github.com/axing1218-source/ScreenCapture" };
+                std::wstring projectUrl{ L"https://github.com/axing1218-source" };
                 ShellExecute(win->hwnd, L"open", projectUrl.data(), nullptr, nullptr, SW_SHOWNORMAL);
                 });
         }
