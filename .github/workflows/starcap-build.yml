@@ -39,31 +39,10 @@ jobs:
           msbuild D:\project\Ling\Ling.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=D:\project\Ling\
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Prepare Windows-compatible StarCap icon
+      - name: Generate StarCap Windows icon
         shell: pwsh
         run: |
-          $pngPath = 'Assets\Branding\starcap-logo-256.png'
-          $icoPath = 'Src\Res\logo.ico'
-          if (-not (Test-Path $pngPath)) { throw "Missing StarCap 256px icon source: $pngPath" }
-          $png = [System.IO.File]::ReadAllBytes($pngPath)
-          if ($png.Length -lt 8 -or $png[0] -ne 0x89 -or $png[1] -ne 0x50 -or $png[2] -ne 0x4E -or $png[3] -ne 0x47) {
-            throw 'StarCap 256px icon source is not a valid PNG.'
-          }
-
-          # Single 256x256 PNG-compressed ICO frame, matching the format that
-          # the Windows SDK resource compiler already accepts in this project.
-          $header = New-Object byte[] 22
-          [BitConverter]::GetBytes([UInt16]1).CopyTo($header, 2)
-          [BitConverter]::GetBytes([UInt16]1).CopyTo($header, 4)
-          [BitConverter]::GetBytes([UInt16]1).CopyTo($header, 10)
-          [BitConverter]::GetBytes([UInt16]32).CopyTo($header, 12)
-          [BitConverter]::GetBytes([UInt32]$png.Length).CopyTo($header, 14)
-          [BitConverter]::GetBytes([UInt32]22).CopyTo($header, 18)
-          $ico = New-Object byte[] ($header.Length + $png.Length)
-          [Array]::Copy($header, 0, $ico, 0, $header.Length)
-          [Array]::Copy($png, 0, $ico, $header.Length, $png.Length)
-          [System.IO.File]::WriteAllBytes($icoPath, $ico)
-          Write-Host "Generated Windows ICO: $icoPath ($($ico.Length) bytes)"
+          pwsh -NoProfile -ExecutionPolicy Bypass -File tools\generate_starcap_icon.ps1 -OutputPath Src\Res\logo.ico
 
       - name: Prepare portable GIF build
         shell: pwsh
