@@ -17,9 +17,15 @@ namespace std
 
 namespace ClipboardHistory
 {
+    // Keep the normal six-argument draw helper visible inside the new namespace.
+    inline void drawText(HDC dc, const std::wstring& text, RECT rc, COLORREF color,
+        HFONT font, UINT flags)
+    {
+        ClipboardHistoryLegacy::drawText(dc, text, rc, color, font, flags);
+    }
+
     // The item-number call site uses the current owner-draw clip as its row
-    // rectangle. Keeping this overload here lets the v0.9.9 renderer stay
-    // independent from the legacy renderer's seven-argument helper.
+    // rectangle. This small overload supplies the missing rectangle there.
     inline void drawText(HDC dc, const std::wstring& text, COLORREF color, HFONT font, UINT flags)
     {
         RECT clip{};
