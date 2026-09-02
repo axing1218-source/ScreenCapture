@@ -40,9 +40,10 @@ StarCap contains local integration changes around the encoder; the cgif license 
 
 ## Ling
 
-The Windows build currently clones and links the Ling GUI framework.
+The Windows build clones and links the Ling GUI framework at a pinned commit for reproducibility.
 
 - Upstream repository: `https://github.com/xland/Ling`
+- Pinned build commit: `b77448ec7e72b1b961d3c6f8f87502d8df72aa5f`
 - Copyright: Copyright (c) 2025 liulun
 - License: MIT
 - License copy: `licenses/Ling-MIT.txt`
