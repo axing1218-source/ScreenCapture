@@ -1,7 +1,7 @@
 # StarCap
 
 <p align="center">
-  <img src="../Assets/Branding/starcap-logo-master-1024.png" alt="StarCap" width="180">
+  <img src="../Assets/Branding/starcap-logo.svg" alt="StarCap" width="180">
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
 
 ## About StarCap
 
-**StarCap** is an open-source Windows screenshot and visual productivity tool. It starts with fast screen capture and brings annotation, scrolling capture, screen recording, OCR, AI-assisted translation, QR recognition, and clipboard workflows into one application.
+**StarCap** is an open-source Windows screenshot and visual productivity tool. It combines fast screen capture with annotation, scrolling capture, screen recording, OCR, AI-assisted translation, QR recognition, and clipboard workflows.
 
 Starting with **v0.9.7**, the project adopts the StarCap name, branding, and an independent maintenance roadmap.
 
@@ -52,41 +52,65 @@ StarCap.exe --enter=qr
 StarCap.exe --enter=tray
 ```
 
-> v0.9.7 is currently in the project-independence transition. Some internal project filenames and compatibility paths may temporarily retain historical names and will be migrated incrementally.
+## Project and build
 
-## Building
+StarCap is a Windows C++20 project built with Visual Studio / MSBuild.
 
-StarCap is currently a Windows C++ project built with Visual Studio / MSBuild. The codebase still depends on third-party components such as Ling. Reproducible builds and dependency cleanup are part of the v0.9.7 roadmap.
+The active project entry points are now fully named for StarCap:
+
+- Solution: `StarCap.slnx`
+- Visual Studio project: `Src/StarCap.vcxproj`
+- Release executable: `StarCap.exe`
+
+Example:
+
+```text
+msbuild Src\StarCap.vcxproj /m /p:Configuration=Release /p:Platform=x64
+```
+
+The project currently depends on third-party components such as Ling. GitHub Actions builds StarCap directly from repository source and also checks active source files for migrated WeShot / ScreenCapture project identifiers so legacy internal naming does not re-enter the current codebase.
+
+A small number of historical data, configuration, or migration identifiers may remain for compatibility with upgrades from older versions. Those compatibility identifiers are not used as StarCap's current product or project naming.
 
 ## Open source and third-party software
 
-StarCap is independently maintained, while parts of the codebase and implementation lineage come from other open-source projects. Copyright notices, license texts, and required attribution are preserved.
+StarCap is independently maintained, while parts of the codebase and implementation lineage come from other open-source projects. Copyright notices, license texts, and attribution required by those licenses are preserved.
 
 See:
 
 - [`LICENSE`](../LICENSE)
 - [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)
+- [`AUTHORS.md`](../AUTHORS.md)
 
 Preserved attribution does not imply endorsement of StarCap's later modifications, releases, or branding by upstream authors.
 
-## Logo
+## Logo and Windows icons
 
 The StarCap mark is a five-point star made of five separately colored points, divided by transparent separators.
 
-Official logo and Windows icon assets are stored in:
+The canonical brand source is:
 
-[`Assets/Branding`](../Assets/Branding)
+- `Assets/Branding/starcap-logo.svg`
+
+The Windows application and tray icons are stored at:
+
+- `Src/Res/logo.ico`
+- `Src/Res/tray.ico`
+
+Generation scripts live under `tools/`, avoiding dependence on manually exported binary branding assets that can become inconsistent or corrupted.
 
 ## Project status
 
-`v0.9.7` is the first development version establishing StarCap as a distinct project identity. Current priorities are:
+`v0.9.7` is the first development version establishing StarCap as a distinct project identity. Completed independence work includes:
 
-- Unify StarCap branding
-- Remove legacy promotional and personal-contact material
-- Organize licensing and third-party notices
-- Unify application naming, resources, and build artifacts
-- Complete GitHub project independence
-- Continue development without regressing the existing v0.9.6 feature set
+- Unified StarCap branding, version metadata, and runtime naming
+- Migrated OCR, translation, diagnostics, and text-layout internals to `StarCap*` naming
+- Migrated the Visual Studio project to `StarCap.slnx` / `StarCap.vcxproj`
+- Rebuilt and validated the Windows application and tray icons
+- Added CI checks for source identity and final executable branding
+- Separated current authorship from upstream and third-party attribution
+
+Next priorities are completing the third-party licensing inventory, archiving historical development documents, and finishing repository-level GitHub independence.
 
 ## Contributing
 
