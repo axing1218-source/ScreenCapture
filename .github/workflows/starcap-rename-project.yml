@@ -1,0 +1,89 @@
+name: StarCap Rename Visual Studio Project
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - starcap-source-cleanup
+
+permissions:
+  contents: write
+
+jobs:
+  rename:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout StarCap
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rename Visual Studio project structure
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # Update the solution entry before renaming the solution itself.
+          if (Test-Path 'ScreenCapture.slnx') {
+            $sln = Get-Content 'ScreenCapture.slnx' -Raw
+            $sln = $sln.Replace('Src/ScreenCapture.vcxproj', 'Src/StarCap.vcxproj')
+            Set-Content 'ScreenCapture.slnx' $sln -Encoding utf8
+          }
+
+          # Update the permanent direct-build workflow to use the StarCap project name.
+          $buildWorkflow = '.github\workflows\starcap-direct-build.yml'
+          $build = Get-Content $buildWorkflow -Raw
+          $build = $build.Replace('Src\ScreenCapture.vcxproj', 'Src\StarCap.vcxproj')
+          Set-Content $buildWorkflow $build -Encoding utf8
+
+          # Visual Studio .user files are machine-local state and should not be versioned.
+          $ignore = Get-Content '.gitignore' -Raw
+          if (-not $ignore.Contains('*.vcxproj.user')) {
+            $ignore = $ignore.TrimEnd() + "`r`n*.vcxproj.user`r`n"
+          }
+          $ignore = $ignore.Replace('/ScreenCapture/x64/' + "`r`n", '')
+          $ignore = $ignore.Replace('/ScreenCapture/ScreenCapture/x64/' + "`r`n", '')
+          Set-Content '.gitignore' $ignore -Encoding utf8
+
+          if (Test-Path 'Src\ScreenCapture.vcxproj.user') {
+            Remove-Item 'Src\ScreenCapture.vcxproj.user' -Force
+          }
+
+          $renames = [ordered]@{
+            'Src\ScreenCapture.vcxproj' = 'Src\StarCap.vcxproj'
+            'Src\ScreenCapture.vcxproj.filters' = 'Src\StarCap.vcxproj.filters'
+            'ScreenCapture.slnx' = 'StarCap.slnx'
+          }
+          foreach ($entry in $renames.GetEnumerator()) {
+            if (Test-Path $entry.Key) {
+              if (Test-Path $entry.Value) { throw "Target already exists: $($entry.Value)" }
+              Move-Item $entry.Key $entry.Value
+            }
+          }
+
+          foreach ($required in @('Src\StarCap.vcxproj','Src\StarCap.vcxproj.filters','StarCap.slnx')) {
+            if (-not (Test-Path $required)) { throw "Required StarCap project file is missing: $required" }
+          }
+
+          $slnNow = Get-Content 'StarCap.slnx' -Raw
+          if (-not $slnNow.Contains('Src/StarCap.vcxproj')) { throw 'StarCap.slnx does not point to StarCap.vcxproj.' }
+
+          $buildNow = Get-Content $buildWorkflow -Raw
+          if (-not $buildNow.Contains('Src\StarCap.vcxproj')) { throw 'Direct build workflow was not migrated to StarCap.vcxproj.' }
+
+          $remaining = git grep -n -E 'ScreenCapture\.vcxproj|ScreenCapture\.slnx' -- . ':!docs' 2>$null
+          if ($LASTEXITCODE -eq 0 -and $remaining) {
+            Write-Host $remaining
+            throw 'Legacy Visual Studio project filenames remain outside historical docs.'
+          }
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git diff --cached --check
+          if (git diff --cached --quiet) {
+            Write-Host 'Visual Studio project structure is already migrated.'
+            exit 0
+          }
+          git commit -m 'Rename Visual Studio project to StarCap'
+          git push origin HEAD:starcap-source-cleanup
