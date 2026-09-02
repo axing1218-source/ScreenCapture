@@ -21,8 +21,10 @@
 
 ## 历史 PR 快照
 
-在 StarCap 脱离原 ScreenCapture fork network 前，以下已关闭的历史 PR 元数据已保存为仓库内 Markdown：
+在 StarCap 脱离原 ScreenCapture fork network 前，仓库中的 4 个历史 PR 元数据均已保存为 Markdown：
 
+- [`history/pull-requests/PR-1-WeShot-v0.8.23-source-paragraph-layout.md`](history/pull-requests/PR-1-WeShot-v0.8.23-source-paragraph-layout.md)
+- [`history/pull-requests/PR-2-WeShot-v0.8.23-build-trigger.md`](history/pull-requests/PR-2-WeShot-v0.8.23-build-trigger.md)
 - [`history/pull-requests/PR-3-WeShot-v0.9.0-core-foundation.md`](history/pull-requests/PR-3-WeShot-v0.9.0-core-foundation.md)
 - [`history/pull-requests/PR-4-WeShot-v0.9.1-clipboard-prototype.md`](history/pull-requests/PR-4-WeShot-v0.9.1-clipboard-prototype.md)
 
