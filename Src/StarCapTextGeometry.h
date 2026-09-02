@@ -10,9 +10,9 @@
 #include <cmath>
 #include <array>
 #include "GeminiClient.h"
-#include "WeShotDiag.h"
+#include "StarCapDiag.h"
 
-namespace WeShotTextGeometry
+namespace StarCapTextGeometry
 {
     struct LineBox
     {
@@ -33,7 +33,7 @@ namespace WeShotTextGeometry
 
             const auto maxDim = (int)OcrEngine::MaxImageDimension();
             if (width > maxDim || height > maxDim) {
-                WeShotDiag::append(std::format(L"local-geometry windows-ocr skip=max-dimension image={}x{} max={}", width, height, maxDim));
+                StarCapDiag::append(std::format(L"local-geometry windows-ocr skip=max-dimension image={}x{} max={}", width, height, maxDim));
                 winrt::uninit_apartment(); apartmentReady = false;
                 return false;
             }
@@ -48,7 +48,7 @@ namespace WeShotTextGeometry
             bitmap.CopyFromBuffer(buffer);
             auto engine = OcrEngine::TryCreateFromUserProfileLanguages();
             if (!engine) {
-                WeShotDiag::append(L"local-geometry windows-ocr unavailable=no-language");
+                StarCapDiag::append(L"local-geometry windows-ocr unavailable=no-language");
                 winrt::uninit_apartment(); apartmentReady = false;
                 return false;
             }
@@ -77,13 +77,13 @@ namespace WeShotTextGeometry
                 if (std::fabs(ay - by) > 2.f) return ay < by;
                 return a.left < b.left;
             });
-            WeShotDiag::append(std::format(L"local-geometry windows-ocr image={}x{} lines={}", width, height, out.size()));
+            StarCapDiag::append(std::format(L"local-geometry windows-ocr image={}x{} lines={}", width, height, out.size()));
             winrt::uninit_apartment(); apartmentReady = false;
             return !out.empty();
         }
         catch (...) {
             if (apartmentReady) { try { winrt::uninit_apartment(); } catch (...) {} }
-            WeShotDiag::append(L"local-geometry windows-ocr failed");
+            StarCapDiag::append(L"local-geometry windows-ocr failed");
             return false;
         }
     }
@@ -144,11 +144,11 @@ namespace WeShotTextGeometry
         }
 
         if (best.empty()) {
-            WeShotDiag::append(std::format(L"local-geometry windows-ocr multiscale image={}x{} lines=0", width, height));
+            StarCapDiag::append(std::format(L"local-geometry windows-ocr multiscale image={}x{} lines=0", width, height));
             return false;
         }
         out = std::move(best);
-        WeShotDiag::append(std::format(L"local-geometry windows-ocr multiscale image={}x{} scale={} lines={}",
+        StarCapDiag::append(std::format(L"local-geometry windows-ocr multiscale image={}x{} scale={} lines={}",
             width, height, bestScale, out.size()));
         return true;
     }
@@ -273,7 +273,7 @@ namespace WeShotTextGeometry
             if (std::fabs(ay - by) > 1.f) return ay < by;
             return a.left < b.left;
         });
-        WeShotDiag::append(std::format(L"local-geometry visual-edge image={}x{} edgeT={} rowT={:.2f} lines={}",
+        StarCapDiag::append(std::format(L"local-geometry visual-edge image={}x{} edgeT={} rowT={:.2f} lines={}",
             width, height, edgeT, rowT, out.size()));
         return !out.empty();
     }
@@ -290,7 +290,7 @@ namespace WeShotTextGeometry
             visualGeometry = collectVisual(pixels, width, height, lines) && !lines.empty();
         }
         if (lines.empty()) {
-            WeShotDiag::append(std::format(L"local-geometry path={} applied=0 source=none fallback=gemini", path ? path : L"?"));
+            StarCapDiag::append(std::format(L"local-geometry path={} applied=0 source=none fallback=gemini", path ? path : L"?"));
             return;
         }
         const wchar_t* sourceName = windowsGeometry ? L"windows-ocr" : L"visual-edge";
@@ -390,9 +390,10 @@ namespace WeShotTextGeometry
             ++applied;
         }
 
-        WeShotDiag::append(std::format(L"local-geometry path={} source={} lines={} blocks={} applied={} fallback={}",
+        StarCapDiag::append(std::format(L"local-geometry path={} source={} lines={} blocks={} applied={} fallback={}",
             path ? path : L"?", sourceName, lines.size(), blocks.size(), applied,
             applied == blocks.size() ? L"none" : L"partial-gemini"));
     }
 }
+
 

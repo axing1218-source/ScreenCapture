@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 #include <winrt/Windows.Data.Json.h>
-#include "WeShotDiag.h"
+#include "StarCapDiag.h"
 
 namespace GeminiClient
 {
@@ -530,7 +530,7 @@ namespace GeminiClient
         const std::wstring geometryFix = expandedX && expandedY ? L"rebuildXY" :
             (expandedX ? L"rebuildX" : (expandedY ? L"rebuildY" : L"stable"));
 
-        WeShotDiag::append(std::format(
+        StarCapDiag::append(std::format(
             L"translate-box image={}x{} raw=[{},{},{},{}] coord={} scoreN={:.3f} scoreP={:.3f} norm0=[{},{},{},{}] geom={} fontW={:.2f} fontH={:.2f} stableFont={:.2f} desiredPx={:.1f}x{:.1f} norm=[{},{},{},{}] lines={}",
             imageW, imageH, ry1, rx1, ry2, rx2, usePixels ? L"pixels" : L"norm1000",
             scoreNorm, scorePixel, beforeYmin, beforeXmin, beforeYmax, beforeXmax,
@@ -719,6 +719,7 @@ namespace GeminiClient
         out.ok = true; return out;
     }
 }
+
 
 
 

@@ -15,8 +15,8 @@
 #include "Util.h"
 #include "Setting.h"
 #include "GeminiClient.h"
-#include "WeShotTextGeometry.h"
-#include "WeShotParagraphLayout.h"
+#include "StarCapTextGeometry.h"
+#include "StarCapParagraphLayout.h"
 
 namespace WeShotOcrV2
 {
@@ -243,8 +243,8 @@ namespace WeShotOcrV2
             if (originalText.empty() && !result.sourceText.empty()) {
                 originalText = std::move(result.sourceText);
             }
-            WeShotTextGeometry::stabilize(result.blocks, pixels, imageW, imageH, L"result");
-            WeShotParagraphLayout::apply(result.blocks, pixels, imageW, imageH, L"result");
+            StarCapTextGeometry::stabilize(result.blocks, pixels, imageW, imageH, L"result");
+            StarCapParagraphLayout::apply(result.blocks, pixels, imageW, imageH, L"result");
             translatedText = std::move(result.translatedText);
             translationBlocks = std::move(result.blocks);
             translationReady = true;
@@ -652,7 +652,7 @@ namespace WeShotOcrV2
                 if (!fits(it.block.translation, it.font, iw, ih)) ++fitFailures;
             }
 
-            WeShotDiag::append(std::format(
+            StarCapDiag::append(std::format(
                 L"layout-v023 path=result blocks={} physical_body={:.2f} collisions={} fit_failures={}",
                 items.size(), bodyOccupied, collisions, fitFailures));
 
@@ -915,6 +915,7 @@ namespace WeShotOcrV2
         win->close();
     }
 }
+
 
 
 

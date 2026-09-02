@@ -10,8 +10,8 @@
 #include "Win/CutMask.h"
 #include "Setting.h"
 #include "GeminiClient.h"
-#include "WeShotTextGeometry.h"
-#include "WeShotParagraphLayout.h"
+#include "StarCapTextGeometry.h"
+#include "StarCapParagraphLayout.h"
 
 namespace WeShotCaptureTranslate
 {
@@ -102,8 +102,8 @@ namespace WeShotCaptureTranslate
             : pixels(std::move(pixels)), imageW(imageW), imageH(imageH), blocks(std::move(blocks)),
               borderWidth(borderWidth), captureOwner(captureOwner)
         {
-            WeShotTextGeometry::stabilize(this->blocks, this->pixels, imageW, imageH, L"direct");
-            WeShotParagraphLayout::apply(this->blocks, this->pixels, imageW, imageH, L"direct");
+            StarCapTextGeometry::stabilize(this->blocks, this->pixels, imageW, imageH, L"direct");
+            StarCapParagraphLayout::apply(this->blocks, this->pixels, imageW, imageH, L"direct");
             x = screenX; y = screenY; w = (float)imageW; h = (float)imageH;
             disableWinAnimation();
             onKeyDown.add([this](UINT key) {
@@ -338,7 +338,7 @@ namespace WeShotCaptureTranslate
                 if (!fits(it.block.translation, it.font, iw, ih)) ++fitFailures;
             }
 
-            WeShotDiag::append(std::format(
+            StarCapDiag::append(std::format(
                 L"layout-v023 path=direct blocks={} physical_body={:.2f} collisions={} fit_failures={}",
                 items.size(), bodyOccupied, collisions, fitFailures));
 
@@ -508,6 +508,7 @@ namespace WeShotCaptureTranslate
         }).detach();
     }
 }
+
 
 
 

@@ -4,11 +4,11 @@
 #include <numeric>
 #include <cmath>
 #include <limits>
-#include "WeShotTextGeometry.h"
+#include "StarCapTextGeometry.h"
 #include "GeminiClient.h"
-#include "WeShotDiag.h"
+#include "StarCapDiag.h"
 
-namespace WeShotParagraphLayout
+namespace StarCapParagraphLayout
 {
     struct Paragraph
     {
@@ -17,12 +17,12 @@ namespace WeShotParagraphLayout
         int lines{};
     };
 
-    inline float lineHeight(const WeShotTextGeometry::LineBox& l)
+    inline float lineHeight(const StarCapTextGeometry::LineBox& l)
     {
         return std::max(1.f, l.bottom - l.top);
     }
 
-    inline float lineWidth(const WeShotTextGeometry::LineBox& l)
+    inline float lineWidth(const StarCapTextGeometry::LineBox& l)
     {
         return std::max(1.f, l.right - l.left);
     }
@@ -35,7 +35,7 @@ namespace WeShotParagraphLayout
         return v.size() & 1 ? v[m] : (v[m - 1] + v[m]) * .5f;
     }
 
-    inline std::vector<Paragraph> makeParagraphs(std::vector<WeShotTextGeometry::LineBox> lines, int imageW)
+    inline std::vector<Paragraph> makeParagraphs(std::vector<StarCapTextGeometry::LineBox> lines, int imageW)
     {
         std::vector<Paragraph> out;
         if (lines.empty()) return out;
@@ -156,16 +156,16 @@ namespace WeShotParagraphLayout
     {
         if (blocks.empty() || pixels.empty() || width <= 0 || height <= 0) return;
 
-        std::vector<WeShotTextGeometry::LineBox> winLines, visualLines;
-        const bool winOk = WeShotTextGeometry::collectWindows(pixels, width, height, winLines) && !winLines.empty();
-        const bool visualOk = WeShotTextGeometry::collectVisual(pixels, width, height, visualLines) && !visualLines.empty();
+        std::vector<StarCapTextGeometry::LineBox> winLines, visualLines;
+        const bool winOk = StarCapTextGeometry::collectWindows(pixels, width, height, winLines) && !winLines.empty();
+        const bool visualOk = StarCapTextGeometry::collectVisual(pixels, width, height, visualLines) && !visualLines.empty();
 
         // Prefer Windows OCR when it sees at least as much physical line structure;
         // otherwise the language-independent visual detector is a better geometry source.
         auto lines = (winOk && (!visualOk || winLines.size() >= visualLines.size())) ? winLines : visualLines;
         const wchar_t* source = (winOk && (!visualOk || winLines.size() >= visualLines.size())) ? L"windows-ocr" : L"visual-edge";
         if (lines.empty()) {
-            WeShotDiag::append(std::format(L"paragraph-v023 path={} source=none blocks={} paragraphs=0 applied=0",
+            StarCapDiag::append(std::format(L"paragraph-v023 path={} source=none blocks={} paragraphs=0 applied=0",
                 path ? path : L"?", blocks.size()));
             return;
         }
@@ -234,9 +234,10 @@ namespace WeShotParagraphLayout
 
         // If Gemini returned more semantic blocks than physical paragraphs, preserve
         // Gemini fallback geometry rather than manufacturing overlaps.
-        WeShotDiag::append(std::format(
+        StarCapDiag::append(std::format(
             L"paragraph-v023 path={} source={} lines={} paragraphs={} blocks={} applied={}",
             path ? path : L"?", source, winOk ? winLines.size() : visualLines.size(),
             paragraphs.size(), blocks.size(), applied));
     }
 }
+

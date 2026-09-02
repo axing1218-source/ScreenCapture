@@ -3,7 +3,7 @@
 #include <string>
 #include <format>
 
-namespace WeShotDiag
+namespace StarCapDiag
 {
     inline std::wstring logPath()
     {
@@ -32,4 +32,5 @@ namespace WeShotDiag
         CloseHandle(h);
     }
 }
+
 
