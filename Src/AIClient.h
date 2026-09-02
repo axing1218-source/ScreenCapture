@@ -114,7 +114,7 @@ namespace AIClient
         const wchar_t* method, const std::wstring& headers, const std::string& body = {})
     {
         HttpResult result;
-        HINTERNET session = WinHttpOpen(L"StarCap/0.9.7", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+        HINTERNET session = WinHttpOpen(L"StarCap/0.9.8", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
             WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
         if (!session) { result.error = L"无法初始化网络连接。"; return result; }
         WinHttpSetTimeouts(session, 8000, 8000, 15000, 45000);

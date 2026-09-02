@@ -151,7 +151,7 @@ namespace GeminiClient
         HttpResult result;
         if (apiKey.empty()) { result.error = L"Gemini API Key 为空。"; return result; }
         const auto modelId = model.empty() ? std::wstring(L"gemini-3.7-flash") : model;
-        HINTERNET session = WinHttpOpen(L"StarCap/0.9.7", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
+        HINTERNET session = WinHttpOpen(L"StarCap/0.9.8", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
             WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
         if (!session) { result.error = L"无法初始化网络连接。"; return result; }
         // 截图工具不应让一次请求挂一分钟。连接失败尽快反馈；正常 Flash 请求通常远低于此上限。
