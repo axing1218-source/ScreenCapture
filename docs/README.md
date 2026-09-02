@@ -7,8 +7,9 @@
 - Repository: `axing1218-source/StarCap`
 - Default branch: `main`
 - Product: `StarCap`
+- Repository status: independent repository (`fork: false`)
 
-仓库已完成从旧名称到 `StarCap` 的重命名；新的源码、文档和 CI 应使用 StarCap 仓库身份。
+StarCap 已完成仓库重命名，并已从原 `xland/ScreenCapture` fork network 中独立。新的源码、文档、CI、Issue 和 Pull Request 均应以独立的 `axing1218-source/StarCap` 仓库为准。
 
 ## 当前分支
 
