@@ -11,6 +11,15 @@
 
 当前功能开发应以 `main` / `starcap-v0.9.7` 为准，不应从归档分支恢复旧产品命名或已淘汰的构建方式。
 
+## 历史 PR 快照
+
+在 StarCap 脱离原 ScreenCapture fork network 前，以下已关闭的历史 PR 元数据已保存为仓库内 Markdown：
+
+- [`history/pull-requests/PR-3-WeShot-v0.9.0-core-foundation.md`](history/pull-requests/PR-3-WeShot-v0.9.0-core-foundation.md)
+- [`history/pull-requests/PR-4-WeShot-v0.9.1-clipboard-prototype.md`](history/pull-requests/PR-4-WeShot-v0.9.1-clipboard-prototype.md)
+
+这些快照只用于保留开发过程信息，不是当前 StarCap 的实现规范。
+
 ## 历史文档
 
 `history/` 中的文件来自 StarCap 更名前的 WeShot 开发阶段，以及 v0.9.0-v0.9.5 的阶段性设计工作。
