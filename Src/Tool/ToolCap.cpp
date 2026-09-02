@@ -55,6 +55,12 @@ void ToolCap::onCreated()
 			btn->setFontSize(12.f);
 			tip->bind(btn, L"翻译 / 原文");
 		}
+		else if (btnIds[i] == L"pin") {
+			// U+E718 is the monochrome Pin glyph in Windows' built-in Segoe MDL2 Assets font.
+			btn->setFontFamily(L"Segoe MDL2 Assets");
+			btn->setFontSize(12.f);
+			tip->bind(btn, Lang::get(btnTips[i]));
+		}
 		else {
 			btn->setFontFamily(L"icon");
 			btn->setFontSize(13.f);
@@ -74,6 +80,7 @@ void ToolCap::onClick(Ling::Button* btn)
 	else if (btn->id == L"ocr") StarCapOcr::show(win);
 	else if (btn->id == L"translate") StarCapCaptureTranslate::toggle(win);
 	else if (btn->id == L"qrcode") win->startQrcode();
+	else if (btn->id == L"pin") win->startPin();
 	else if (btn->id == L"save") win->saveToFile();
 	else if (btn->id == L"clipboard") win->copyToClipboard();
 	else if (btn->id == L"close") win->close();
