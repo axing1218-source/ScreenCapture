@@ -79,9 +79,13 @@ jobs:
           $proj = $proj.Replace(';D:\sdk\gifski\target\release\gifski.lib', '')
           Set-Content Src\ScreenCapture.vcxproj $proj -Encoding utf8
 
-      - name: Apply translation UI patch
+      - name: Apply inherited feature patch chain
         shell: pwsh
         run: pwsh -NoProfile -ExecutionPolicy Bypass -File tools\patch_translation_ui.ps1
+
+      - name: Apply StarCap runtime branding and migrations
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File tools\patch_starcap_runtime_branding.ps1
 
       - name: Build StarCap
         shell: pwsh
@@ -89,11 +93,45 @@ jobs:
           msbuild Src\ScreenCapture.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=${{ github.workspace }}\
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify StarCap runtime strings
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path . -Recurse -Filter StarCap.exe | Where-Object { $_.FullName -match 'Release' } | Select-Object -First 1
+          if (-not $exe) { throw 'StarCap.exe build output was not produced.' }
+          @'
+          from pathlib import Path
+          import sys
+
+          data = Path(sys.argv[1]).read_bytes()
+          forbidden = [
+              'WeShot_Diagnostics.log',
+              'WeShot Gemini API Key',
+              'WeShot/0.8',
+              'WeShot - 文字识别 / 翻译',
+              'WeShot 翻译',
+              'WeShot 剪贴板',
+              'WeShot 图片预览',
+              'WeShot 内容预览',
+              'WeShotClipboard',
+              'Screen Capture',
+              'https://github.com/xland/'
+          ]
+          hits = []
+          for text in forbidden:
+              if text.encode('utf-8') in data or text.encode('utf-16le') in data:
+                  hits.append(text)
+          if hits:
+              raise SystemExit('Legacy runtime strings remain: ' + ', '.join(hits))
+          print('StarCap runtime string scan passed.')
+          '@ | Set-Content verify_starcap_binary.py -Encoding utf8
+          python verify_starcap_binary.py $exe.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Package StarCap executable
         shell: pwsh
         run: |
-          $exe = Get-ChildItem -Path . -Recurse -Filter ScreenCapture.exe | Where-Object { $_.FullName -match 'Release' } | Select-Object -First 1
-          if (-not $exe) { throw 'ScreenCapture.exe build output was not produced.' }
+          $exe = Get-ChildItem -Path . -Recurse -Filter StarCap.exe | Where-Object { $_.FullName -match 'Release' } | Select-Object -First 1
+          if (-not $exe) { throw 'StarCap.exe build output was not produced.' }
           New-Item -ItemType Directory -Force artifact | Out-Null
           Copy-Item $exe.FullName artifact\StarCap.exe
           Write-Host "Packaged: artifact\StarCap.exe"
