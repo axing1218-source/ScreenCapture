@@ -1,0 +1,79 @@
+name: StarCap Rename OCR Modules
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - starcap-source-cleanup
+
+permissions:
+  contents: write
+
+jobs:
+  rename:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout StarCap
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rename OCR and capture translation internals
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $replacements = [ordered]@{
+            'WeShotOcrV2' = 'StarCapOcrV2'
+            'WeShotOcr' = 'StarCapOcr'
+            'WeShotCaptureTranslate' = 'StarCapCaptureTranslate'
+          }
+
+          $sourceFiles = Get-ChildItem Src -Recurse -File | Where-Object {
+            $_.Extension -in @('.h', '.hpp', '.cpp', '.c', '.vcxproj', '.filters', '.user')
+          }
+
+          foreach ($file in $sourceFiles) {
+            $text = Get-Content $file.FullName -Raw
+            $updated = $text
+            foreach ($entry in $replacements.GetEnumerator()) {
+              $updated = $updated.Replace($entry.Key, $entry.Value)
+            }
+            if ($updated -ne $text) {
+              Set-Content $file.FullName $updated -Encoding utf8
+            }
+          }
+
+          $renames = [ordered]@{
+            'Src\WeShotOcrV2.h' = 'Src\StarCapOcrV2.h'
+            'Src\WeShotOcr.h' = 'Src\StarCapOcr.h'
+            'Src\WeShotCaptureTranslate.h' = 'Src\StarCapCaptureTranslate.h'
+          }
+
+          foreach ($entry in $renames.GetEnumerator()) {
+            if (Test-Path $entry.Key) {
+              if (Test-Path $entry.Value) { throw "Target already exists: $($entry.Value)" }
+              Move-Item $entry.Key $entry.Value
+            }
+          }
+
+          $remaining = git grep -n -E 'WeShotOcr|WeShotCaptureTranslate' -- Src 2>$null
+          if ($LASTEXITCODE -eq 0 -and $remaining) {
+            Write-Host $remaining
+            throw 'Legacy OCR/translation internal names remain under Src.'
+          }
+
+          foreach ($required in @('Src\StarCapOcr.h','Src\StarCapOcrV2.h','Src\StarCapCaptureTranslate.h')) {
+            if (-not (Test-Path $required)) { throw "Required renamed source file is missing: $required" }
+          }
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A Src
+          git diff --cached --check
+          if (git diff --cached --quiet) {
+            Write-Host 'OCR/translation internals are already migrated.'
+            exit 0
+          }
+          git commit -m 'Rename StarCap OCR and translation internals'
+          git push origin HEAD:starcap-source-cleanup
