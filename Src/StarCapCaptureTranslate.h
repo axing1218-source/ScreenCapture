@@ -153,15 +153,19 @@ namespace StarCapCaptureTranslate
             auto ctx = canvas->startPaint();
             if (!ctx) return;
             ctx->Clear(0);
-            if (imageBitmap) {
-                auto full = D2D1::RectF(0.f, 0.f, (float)imageW, (float)imageH);
-                ctx->DrawBitmap(imageBitmap.Get(), full, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-                paintBlocks(ctx, full);
-                if (borderWidth > 0.f) {
-                    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> border;
-                    ctx->CreateSolidColorBrush(D2D1::ColorF(0.1f, 0.5f, 1.f, 0.9f), border.GetAddressOf());
-                    if (border) ctx->DrawRectangle(full, border.Get(), borderWidth);
-                }
+
+            auto full = D2D1::RectF(0.f, 0.f, (float)imageW, (float)imageH);
+            Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> backgroundBrush;
+            ctx->CreateSolidColorBrush(
+                D2D1::ColorF(254.f / 255.f, 254.f / 255.f, 254.f / 255.f, 1.f),
+                backgroundBrush.GetAddressOf());
+            if (backgroundBrush) ctx->FillRectangle(full, backgroundBrush.Get());
+
+            paintBlocks(ctx, full);
+            if (borderWidth > 0.f) {
+                Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> border;
+                ctx->CreateSolidColorBrush(D2D1::ColorF(0.1f, 0.5f, 1.f, 0.9f), border.GetAddressOf());
+                if (border) ctx->DrawRectangle(full, border.Get(), borderWidth);
             }
             canvas->finishPaint();
         }
@@ -344,14 +348,9 @@ namespace StarCapCaptureTranslate
 
             for (auto& it : items) {
                 if (it.slot.right <= it.slot.left || it.slot.bottom <= it.slot.top) continue;
-                auto bgColor = sampleBackground(it.block);
-                const float lum = bgColor.r * .299f + bgColor.g * .587f + bgColor.b * .114f;
-                auto textColor = lum > .55f ? D2D1::ColorF(D2D1::ColorF::Black) : D2D1::ColorF(D2D1::ColorF::White);
-                Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bgBrush, textBrush;
-                ctx->CreateSolidColorBrush(bgColor, bgBrush.GetAddressOf());
-                ctx->CreateSolidColorBrush(textColor, textBrush.GetAddressOf());
-                if (!bgBrush || !textBrush) continue;
-                ctx->FillRectangle(it.slot, bgBrush.Get());
+                Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> textBrush;
+                ctx->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), textBrush.GetAddressOf());
+                if (!textBrush) continue;
 
                 const float iw = std::max(.25f, (it.slot.right-it.slot.left) - it.padX*2.f);
                 const float ih = std::max(.25f, (it.slot.bottom-it.slot.top) - it.padY*2.f);
