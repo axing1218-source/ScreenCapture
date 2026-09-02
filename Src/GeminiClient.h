@@ -345,9 +345,10 @@ namespace GeminiClient
             thinking.SetNamedValue(L"thinkingBudget", JsonValue::CreateNumberValue(0));
         }
         else {
-            // Flash 截图 OCR/翻译属于简单视觉任务，minimal 优先低延迟；非 Flash 用 low 更稳妥。
-            thinking.SetNamedValue(L"thinkingLevel", JsonValue::CreateStringValue(
-                model.find(L"flash") != std::wstring::npos ? L"minimal" : L"low"));
+            // StarCap OCR/translation is latency-sensitive, but Gemini 3.7 Flash does
+            // not support "minimal". "low" is supported by all current non-image
+            // Gemini 3.x models offered by StarCap, including 3.7 Flash.
+            thinking.SetNamedValue(L"thinkingLevel", JsonValue::CreateStringValue(L"low"));
         }
         generationConfig.SetNamedValue(L"thinkingConfig", thinking);
     }

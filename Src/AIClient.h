@@ -82,7 +82,7 @@ namespace AIClient
             return { L"gpt-5.6-luna", L"gpt-5.6-terra", L"gpt-5.6-sol" };
         }
         if (id == ProviderAnthropic) {
-            return { L"claude-sonnet-5", L"claude-haiku-4-5-20251001", L"claude-opus-5" };
+            return { L"claude-sonnet-5", L"claude-opus-5", L"claude-fable-5-1", L"claude-haiku-4-5-20251001" };
         }
         if (id == ProviderDeepSeek) {
             // Screenshot OCR/translation requires a vision-capable model. Text-only
@@ -470,8 +470,18 @@ namespace AIClient
         };
         if (id == ProviderGemini) {
             auto arr = root.GetNamedArray(L"models", nullptr);
-            if (arr) for (uint32_t i = 0; i < arr.Size(); ++i)
-                add(std::wstring{ arr.GetObjectAt(i).GetNamedString(L"name", L"") });
+            if (arr) for (uint32_t i = 0; i < arr.Size(); ++i) {
+                auto item = arr.GetObjectAt(i);
+                auto methods = item.GetNamedArray(L"supportedGenerationMethods", nullptr);
+                bool canGenerate = false;
+                if (methods) for (uint32_t j = 0; j < methods.Size(); ++j) {
+                    if (std::wstring{ methods.GetStringAt(j) } == L"generateContent") {
+                        canGenerate = true; break;
+                    }
+                }
+                if (!canGenerate) continue;
+                add(std::wstring{ item.GetNamedString(L"name", L"") });
+            }
         }
         else {
             auto arr = root.GetNamedArray(L"data", nullptr);
@@ -490,12 +500,10 @@ namespace AIClient
                 add(std::move(model));
             }
         }
-        // Keep curated defaults visible even if an account's model-list endpoint is
-        // temporarily incomplete; append account-visible models after them.
-        auto merged = builtInModels(id);
-        for (auto& model : out.models)
-            if (std::find(merged.begin(), merged.end(), model) == merged.end()) merged.push_back(model);
-        out.models = std::move(merged);
+        // Once the provider successfully returns compatible models, trust that
+        // account-specific list. Curated defaults are only a fallback when no compatible
+        // models were returned; the UI separately preserves the user's current selection.
+        if (out.models.empty()) out.models = builtInModels(id);
         out.ok = true;
         return out;
     }
