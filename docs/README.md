@@ -2,6 +2,15 @@
 
 当前 `docs/` 目录用于保存 StarCap 的开发说明与历史设计记录。
 
+## 当前分支
+
+- `main`：StarCap 当前默认开发线。
+- `starcap-v0.9.7`：StarCap v0.9.7 对应的正式开发分支。
+- `starcap-source-cleanup`：v0.9.7 独立化与源码清理过程中使用的工作分支。
+- `archive/legacy-main-pre-starcap`：切换默认代码线前保存的旧 `main` 快照，仅用于历史追溯。
+
+当前功能开发应以 `main` / `starcap-v0.9.7` 为准，不应从归档分支恢复旧产品命名或已淘汰的构建方式。
+
 ## 历史文档
 
 `history/` 中的文件来自 StarCap 更名前的 WeShot 开发阶段，以及 v0.9.0-v0.9.5 的阶段性设计工作。
