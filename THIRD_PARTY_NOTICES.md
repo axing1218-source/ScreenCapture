@@ -1,38 +1,80 @@
 # Third-Party Notices
 
-StarCap is independently maintained by **阿星**. The project contains modified code, inherited code, or implementation ideas from third-party open-source projects.
+StarCap is independently maintained by **阿星**. Unless a file states otherwise, current StarCap project code is distributed under the repository's root `LICENSE`. This project also contains inherited, bundled, linked, or referenced third-party open-source work whose original notices and license requirements are preserved below.
 
-This file exists to preserve attribution and license information required by those projects. Third-party attribution does **not** imply that upstream authors endorse StarCap, its branding, or later modifications.
+Third-party attribution does **not** imply endorsement of StarCap, its branding, or later modifications by upstream authors.
 
-## xland/ScreenCapture
+## Upstream project lineage: xland/ScreenCapture
 
-StarCap was originally developed from the public open-source project `xland/ScreenCapture` and has since received substantial product, UI, OCR, translation, clipboard, and workflow changes.
+StarCap was developed from the public open-source project `xland/ScreenCapture` and has since received product, UI, OCR, translation, clipboard, branding, build, and workflow changes.
 
 - Upstream repository: `https://github.com/xland/ScreenCapture`
-- Upstream license: MIT
-- Historical Git commit authorship is retained.
+- License: MIT
+- The root `LICENSE` remains the license text distributed by the upstream repository.
+- Historical Git commit authorship remains preserved in repository history.
+- Inherited resources that remain byte-for-byte identical to upstream, such as `Src/Res/iconfont.ttf`, remain part of this upstream lineage.
 
-The upstream repository's license notice must remain with copies or substantial portions of the inherited software. The root `LICENSE` file is therefore preserved while the licensing inventory is being reconciled for StarCap.
+Preserving upstream attribution does not make the upstream authors maintainers or endorsers of StarCap.
+
+## quirc
+
+StarCap bundles the quirc QR-code recognition library under `Src/quirc/`.
+
+- Upstream repository: `https://github.com/dlbeer/quirc`
+- Copyright: Copyright (C) 2010-2012 Daniel Beer <dlbeer@gmail.com>
+- License: ISC
+- License copy: `licenses/quirc-ISC.txt`
+
+The bundled `Src/quirc/` tree corresponds to quirc's library source tree.
+
+## cgif
+
+StarCap bundles cgif source under `Src/Win/cgif/` for GIF encoding.
+
+- Upstream repository: `https://github.com/dloebl/cgif`
+- Copyright: Copyright (c) 2021-2026, Daniel Löbl <dloebl.2000@gmail.com>
+- License: MIT
+- License copy: `licenses/cgif-MIT.txt`
+
+StarCap contains local integration changes around the encoder; the cgif license remains applicable to cgif-derived source.
 
 ## Ling
 
-The current native UI/build line depends on the Ling GUI framework.
+The Windows build currently clones and links the Ling GUI framework.
 
-- Repository: `https://github.com/xland/Ling`
+- Upstream repository: `https://github.com/xland/Ling`
+- Copyright: Copyright (c) 2025 liulun
+- License: MIT
+- License copy: `licenses/Ling-MIT.txt`
 
-The dependency and its license remain subject to the terms published by that project.
+The StarCap CI applies small build-compatibility patches to the checked-out Ling source before compilation. Those patches do not remove Ling's original license obligations.
 
-## ClipboardManager
+## Yoga
 
-The clipboard-manager work in the pre-StarCap code line adapted interaction and visual ideas from the public project `ZiuChen/ClipboardManager`.
+Ling contains and builds Yoga layout-engine source that is linked into the Windows build.
 
-- Repository: `https://github.com/ZiuChen/ClipboardManager`
+- Upstream project: Yoga (`https://github.com/react/yoga`)
+- Copyright: Copyright (c) Facebook, Inc. and its affiliates. / Meta Platforms, Inc. and affiliates
+- License: MIT
+- License copy: `licenses/Yoga-MIT.txt`
+
+The Yoga source included by Ling identifies itself as MIT-licensed Meta/Facebook code.
+
+## ClipboardManager reference
+
+Pre-StarCap clipboard-manager work used interaction and visual ideas from the public `ZiuChen/ClipboardManager` project.
+
+- Upstream repository: `https://github.com/ZiuChen/ClipboardManager`
 - License: Apache License 2.0
 
-StarCap's clipboard implementation is a native Win32/C++ implementation rather than the original Vue/JavaScript runtime.
+StarCap's current clipboard implementation is native Win32/C++ rather than the original Vue/JavaScript runtime. This notice is retained to document implementation lineage and prior design reference.
 
-## Other bundled components
+## Microsoft platform APIs
 
-The source tree also contains or references additional third-party components, including QR, GIF, media, and Windows-related libraries. A complete per-component licensing inventory is part of the v0.9.7 open-source cleanup.
+StarCap uses Windows platform APIs and SDK components including Win32, Direct2D/Direct3D, Windows Imaging Component, Media Foundation, audio APIs, and related system libraries. These are platform dependencies rather than source code bundled in this repository and remain subject to Microsoft's applicable terms.
 
-When a component's license requires redistribution of a copyright notice, license text, or NOTICE file, StarCap will preserve it.
+## License copies
+
+Third-party license texts that correspond to bundled or linked open-source components are collected in [`licenses/`](./licenses/).
+
+When a third-party component requires preservation of a copyright notice, license text, or NOTICE material, StarCap will retain it in source distributions and applicable binary distributions.
