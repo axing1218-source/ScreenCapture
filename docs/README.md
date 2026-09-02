@@ -11,6 +11,17 @@
 
 StarCap 已完成仓库重命名，并已从原 `xland/ScreenCapture` fork network 中独立。新的源码、文档、CI、Issue 和 Pull Request 均应以独立的 `axing1218-source/StarCap` 仓库为准。
 
+## Git 历史策略
+
+正式 `main` 从 StarCap 独立产品状态重新建立根提交，避免默认开发线继续把上游项目作者统计为 StarCap 当前贡献者。
+
+- 当前干净主线根提交：`Initial StarCap release`。
+- `archive/full-history-pre-clean-main`：保存历史重建前的完整 Git 提交链，包含 StarCap、WeShot 和上游 ScreenCapture 的全部可追溯开发历史。
+- `archive/legacy-main-pre-starcap`：保存切换默认代码线前的旧 `main` 快照。
+- 许可证、第三方 notices、AUTHORS 与 `docs/history/` 均继续保留；重建默认分支历史不改变任何原始版权或许可证义务。
+
+新的功能开发只在干净的 `main` 上继续。需要追溯旧实现、提交作者或历史差异时，应使用 archive 分支，而不是把旧提交重新合并回 `main`。
+
 ## Release 与自动更新
 
 StarCap 的用户更新通道以本仓库的 **GitHub Latest Release** 为唯一来源。
@@ -28,9 +39,10 @@ StarCap 的用户更新通道以本仓库的 **GitHub Latest Release** 为唯一
 - `main`：StarCap 当前默认开发线。
 - `starcap-v0.9.7`：StarCap v0.9.7 对应的正式开发分支。
 - `starcap-source-cleanup`：v0.9.7 独立化与源码清理过程中使用的工作分支。
-- `archive/legacy-main-pre-starcap`：切换默认代码线前保存的旧 `main` 快照，仅用于历史追溯。
+- `archive/full-history-pre-clean-main`：历史重建前的完整提交链，只用于追溯。
+- `archive/legacy-main-pre-starcap`：切换默认代码线前保存的旧 `main` 快照，只用于历史追溯。
 
-当前功能开发应以 `main` / `starcap-v0.9.7` 为准，不应从归档分支恢复旧产品命名或已淘汰的构建方式。
+当前功能开发应以 `main` 为准，不应从归档分支恢复旧产品命名或已淘汰的构建方式。
 
 ## 历史 PR 快照
 
