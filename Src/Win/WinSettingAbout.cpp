@@ -24,7 +24,7 @@ WinSettingAbout::WinSettingAbout(Ling::WinBase* parent):Ling::Node(parent)
         auto btn = box->makeChild<Ling::Button>();
         btn->setId(key);
         if (key == L"version") {
-            btn->setText(WESHOT_DISPLAY_VERSION);
+            btn->setText(STARCAP_DISPLAY_VERSION);
         }
         else if (key == L"project") {
             // Until the repository is detached/renamed to StarCap, show the

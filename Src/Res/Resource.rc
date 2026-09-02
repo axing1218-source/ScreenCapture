@@ -10,8 +10,8 @@ en-US RCDATA "../../Lang/English.en-US.json"
 
 // StarCap executable metadata. Version values are centralized in Version.h.
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION WESHOT_FILE_VERSION
-PRODUCTVERSION WESHOT_FILE_VERSION
+FILEVERSION STARCAP_FILE_VERSION
+PRODUCTVERSION STARCAP_FILE_VERSION
 FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
 FILEFLAGS 0x1L
@@ -28,12 +28,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "阿星"
             VALUE "FileDescription", "StarCap"
-            VALUE "FileVersion", WESHOT_FILE_VERSION_STR
+            VALUE "FileVersion", STARCAP_FILE_VERSION_STR
             VALUE "InternalName", "StarCap.exe"
             VALUE "LegalCopyright", "Copyright (C) 阿星 2026"
             VALUE "OriginalFilename", "StarCap.exe"
             VALUE "ProductName", "StarCap"
-            VALUE "ProductVersion", WESHOT_FILE_VERSION_STR
+            VALUE "ProductVersion", STARCAP_FILE_VERSION_STR
         END
     END
     BLOCK "VarFileInfo"
