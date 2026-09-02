@@ -1,0 +1,148 @@
+name: StarCap Direct Source Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - starcap-v0.9.7
+      - starcap-source-cleanup
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout StarCap
+        uses: actions/checkout@v4
+
+      - name: Verify StarCap source identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $legacyIdentifiers = git grep -n -E 'WeShot(Diag|TextGeometry|ParagraphLayout|Ocr|OcrV2|CaptureTranslate)|WESHOT_(FILE_VERSION|FILE_VERSION_STR|DISPLAY_VERSION)' -- Src 2>$null
+          if ($LASTEXITCODE -eq 0 -and $legacyIdentifiers) {
+            Write-Host $legacyIdentifiers
+            throw 'Legacy WeShot internal identifiers remain in active source.'
+          }
+
+          $legacyProjectNames = git grep -n -E 'ScreenCapture\.vcxproj|ScreenCapture\.slnx' -- Src StarCap.slnx .github/workflows/starcap-direct-build.yml 2>$null
+          if ($LASTEXITCODE -eq 0 -and $legacyProjectNames) {
+            Write-Host $legacyProjectNames
+            throw 'Legacy ScreenCapture project filenames remain in active project files.'
+          }
+
+          if (-not (Test-Path 'Src\StarCap.vcxproj')) { throw 'Src\StarCap.vcxproj is missing.' }
+          if (-not (Test-Path 'StarCap.slnx')) { throw 'StarCap.slnx is missing.' }
+          Write-Host 'StarCap source identity verification passed.'
+          exit 0
+
+      - name: Resolve StarCap version
+        id: version
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $text = Get-Content 'Src\Version.h' -Raw
+          $match = [regex]::Match($text, 'STARCAP_DISPLAY_VERSION\s+L"v([0-9]+\.[0-9]+\.[0-9]+)"')
+          if (-not $match.Success) { throw 'Unable to resolve STARCAP_DISPLAY_VERSION.' }
+          $version = $match.Groups[1].Value
+          $json = Get-Content 'Doc\version.json' -Raw | ConvertFrom-Json
+          $jsonVersion = ($json.version -join '.')
+          if ($jsonVersion -ne $version) { throw "Version mismatch: Version.h=$version, Doc/version.json=$jsonVersion" }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "StarCap version: $version"
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Prepare pinned Ling dependency
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $lingCommit = 'b77448ec7e72b1b961d3c6f8f87502d8df72aa5f'
+
+          New-Item -ItemType Directory -Force D:\project | Out-Null
+          if (Test-Path D:\project\Ling) { Remove-Item -Recurse -Force D:\project\Ling }
+          git clone --no-checkout https://github.com/xland/Ling.git D:\project\Ling
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git -C D:\project\Ling checkout --detach $lingCommit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $actualLingCommit = (git -C D:\project\Ling rev-parse HEAD).Trim()
+          if ($actualLingCommit -ne $lingCommit) {
+            throw "Ling checkout mismatch: expected $lingCommit, got $actualLingCommit"
+          }
+          Write-Host "Using pinned Ling commit $actualLingCommit"
+
+          $util = Get-Content D:\project\Ling\include\Util.h -Raw
+          $util = $util.Replace('constexpr auto gen = [](size_t i, size_t idx) {', 'constexpr auto gen = [](std::wstring_view chars, size_t i, size_t idx) {')
+          $util = $util.Replace('std::wstring{gen(I, I)...}', 'std::wstring{gen(chars, I, I)...}')
+          Set-Content D:\project\Ling\include\Util.h $util -Encoding utf8
+
+          $lingAppPath = 'D:\project\Ling\src\App.cpp'
+          $lingApp = Get-Content $lingAppPath -Raw
+          $oldTrayLine = 'tray->hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(1));'
+          if (-not $lingApp.Contains($oldTrayLine)) { throw 'Ling tray icon load line changed.' }
+          $newTrayCode = 'tray->hIcon = (HICON)LoadImageW(GetModuleHandle(nullptr), MAKEINTRESOURCE(2), IMAGE_ICON,' + "`r`n" +
+            '            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);' + "`r`n" +
+            '        if (!tray->hIcon) {' + "`r`n" +
+            '            tray->hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(1));' + "`r`n" +
+            '        }'
+          $lingApp = $lingApp.Replace($oldTrayLine, $newTrayCode)
+          Set-Content $lingAppPath $lingApp -Encoding utf8
+
+      - name: Build Yoga and Ling
+        shell: pwsh
+        run: |
+          msbuild D:\project\Ling\yoga\yoga.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=D:\project\Ling\
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          msbuild D:\project\Ling\Ling.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=D:\project\Ling\
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Build StarCap directly from repository source
+        shell: pwsh
+        run: |
+          msbuild Src\StarCap.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=${{ github.workspace }}\
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify direct-build executable
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem -Path . -Recurse -Filter StarCap.exe | Where-Object { $_.FullName -match 'Release' } | Select-Object -First 1
+          if (-not $exe) { throw 'StarCap.exe direct build output was not produced.' }
+          @'
+          from pathlib import Path
+          import sys
+          data = Path(sys.argv[1]).read_bytes()
+          version = sys.argv[2]
+          required = [
+              'StarCap.exe', f'StarCap/{version}', 'StarCap_Diagnostics.log',
+              'https://github.com/axing1218-source/StarCap/releases/latest/download/version.json',
+              'https://github.com/axing1218-source/StarCap/releases/latest/download/StarCap.exe',
+              'StarCap.update.exe'
+          ]
+          forbidden = [
+              'WeShot_Diagnostics.log', 'WeShot Gemini API Key', 'WeShot 剪贴板',
+              'WeShotClipboard', 'Screen Capture', 'StarCap/0.8',
+              'https://github.com/xland/ScreenCapture/releases',
+              'screen-capture-1300696206.cos.ap-chengdu.myqcloud.com',
+              'ScreenCapture.update.exe'
+          ]
+          missing = [s for s in required if s.encode('utf-8') not in data and s.encode('utf-16le') not in data]
+          hits = [s for s in forbidden if s.encode('utf-8') in data or s.encode('utf-16le') in data]
+          if missing:
+              raise SystemExit('Required StarCap runtime strings missing: ' + ', '.join(missing))
+          if hits:
+              raise SystemExit('Legacy runtime strings remain: ' + ', '.join(hits))
+          print('Direct source build verification passed.')
+          '@ | Set-Content verify_direct_build.py -Encoding utf8
+          python verify_direct_build.py $exe.FullName '${{ steps.version.outputs.version }}'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload direct-build executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarCap-v${{ steps.version.outputs.version }}-direct-source-build
+          path: x64/Release/StarCap.exe
+          if-no-files-found: error

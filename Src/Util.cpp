@@ -1,0 +1,443 @@
+#include "pch.h"
+#include <wincodec.h>
+#include <shobjidl.h>
+#include <format>
+#include <fstream>
+#include "Util.h"
+#include "Lang.h"
+#include "Setting.h"
+#include "quirc/quirc.h"
+
+using Microsoft::WRL::ComPtr;
+
+namespace {
+	// 把 BGRA top-down 像素编码成 PNG 写进 stream。saveToClipboard 和 saveToFile 共用这段。
+	bool encodePng(IStream* stream, const int w, const int h, BYTE* data)
+	{
+		UINT rowBytes = (UINT)w * 4;
+		UINT imgBytes = rowBytes * (UINT)h;
+		ComPtr<IWICImagingFactory> factory;
+		auto hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(factory.GetAddressOf()));
+		if (FAILED(hr)) return false;
+		ComPtr<IWICBitmapEncoder> encoder;
+		hr = factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, encoder.GetAddressOf());
+		if (FAILED(hr)) return false;
+		hr = encoder->Initialize(stream, WICBitmapEncoderNoCache);
+		if (FAILED(hr)) return false;
+		ComPtr<IWICBitmapFrameEncode> frame;
+		hr = encoder->CreateNewFrame(frame.GetAddressOf(), nullptr);
+		if (FAILED(hr)) return false;
+		hr = frame->Initialize(nullptr);
+		if (FAILED(hr)) return false;
+		hr = frame->SetSize((UINT)w, (UINT)h);
+		if (FAILED(hr)) return false;
+		WICPixelFormatGUID fmt = GUID_WICPixelFormat32bppBGRA;
+		hr = frame->SetPixelFormat(&fmt);
+		if (FAILED(hr) || !IsEqualGUID(fmt, GUID_WICPixelFormat32bppBGRA)) return false;
+		hr = frame->WritePixels((UINT)h, rowBytes, imgBytes, data);
+		if (FAILED(hr)) return false;
+		hr = frame->Commit();
+		if (FAILED(hr)) return false;
+		return SUCCEEDED(encoder->Commit());
+	}
+
+	// quirc 交出来的是裸字节流：BYTE 类型的二维码现实中基本都是 UTF-8（微信、支付宝
+	// 生成的都是），Kanji 类型按 ISO 18004 规定是 Shift-JIS。所以先按 UTF-8 严格解，
+	// 解不通再退回对应的本地代码页，避免把中文变成一堆问号
+	std::wstring qrPayloadToWStr(const uint8_t* payload, const int len, const int dataType)
+	{
+		if (len <= 0) return L"";
+		auto convert = [payload, len](UINT codePage, DWORD flags) {
+			auto str = (const char*)payload;
+			auto count = MultiByteToWideChar(codePage, flags, str, len, nullptr, 0);
+			if (count <= 0) return std::wstring();
+			std::wstring result(count, 0);
+			MultiByteToWideChar(codePage, flags, str, len, result.data(), count);
+			return result;
+		};
+		auto result = convert(CP_UTF8, MB_ERR_INVALID_CHARS);
+		if (!result.empty()) return result;
+		return convert(dataType == QUIRC_DATA_TYPE_KANJI ? 932 : CP_ACP, 0);
+	}
+
+	// 插件的查找顺序：先本 exe 同目录（绿色包一起解压的情况），
+	// 再 %appdata%\ScreenCapture\plugin（后来单独下载的情况）
+	std::filesystem::path findImageReader()
+	{
+		wchar_t buffer[MAX_PATH]{};
+		GetModuleFileName(nullptr, buffer, MAX_PATH);
+		auto path = std::filesystem::path{ buffer }.parent_path().append(L"ImageReader.exe");
+		if (std::filesystem::exists(path)) return path;
+		path = Setting::get()->getDataPath().append(L"plugin").append(L"ImageReader.exe");
+		if (std::filesystem::exists(path)) return path;
+		return {};
+	}
+}
+
+void Util::saveToClipboard(const int w, const int h, BYTE* data)
+{
+	if (w <= 0 || h <= 0 || !data) return;
+	DWORD rowBytes = (DWORD)w * 4;
+	DWORD imgBytes = rowBytes * (DWORD)h;
+
+	// ---------- 1) PNG 编码到内存流 ----------
+	ComPtr<IStream> pngStream;
+	if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, pngStream.GetAddressOf()))) return;
+	if (!encodePng(pngStream.Get(), w, h, data)) return;
+	// 流内部的 HGLOBAL 尺寸可能大于实际字节数，拷一份精确大小的出来给剪切板
+	STATSTG stat{};
+	if (FAILED(pngStream->Stat(&stat, STATFLAG_NONAME))) return;
+	SIZE_T pngSize = (SIZE_T)stat.cbSize.QuadPart;
+	if (pngSize == 0) return;
+	HGLOBAL hPngSrc{ nullptr };
+	if (FAILED(GetHGlobalFromStream(pngStream.Get(), &hPngSrc)) || !hPngSrc) return;
+	auto srcPtr = GlobalLock(hPngSrc);
+	if (!srcPtr) return;
+	HGLOBAL hPng = GlobalAlloc(GMEM_MOVEABLE, pngSize);
+	if (!hPng) { GlobalUnlock(hPngSrc); return; }
+	auto dstPtr = GlobalLock(hPng);
+	if (!dstPtr) { GlobalUnlock(hPngSrc); GlobalFree(hPng); return; }
+	CopyMemory(dstPtr, srcPtr, pngSize);
+	GlobalUnlock(hPng);
+	GlobalUnlock(hPngSrc);
+
+	// ---------- 2) 构造 CF_DIBV5（带 alpha） ----------
+	HGLOBAL hDibV5 = GlobalAlloc(GMEM_MOVEABLE, sizeof(BITMAPV5HEADER) + imgBytes);
+	if (!hDibV5) { GlobalFree(hPng); return; }
+	auto pv5 = static_cast<BYTE*>(GlobalLock(hDibV5));
+	if (!pv5) { GlobalFree(hDibV5); GlobalFree(hPng); return; }
+	auto bv5 = reinterpret_cast<BITMAPV5HEADER*>(pv5);
+	*bv5 = {};
+	bv5->bV5Size = sizeof(BITMAPV5HEADER);
+	bv5->bV5Width = w;
+	bv5->bV5Height = -h;                  // 负 = top-down
+	bv5->bV5Planes = 1;
+	bv5->bV5BitCount = 32;
+	bv5->bV5Compression = BI_BITFIELDS;   // 让接收端识别 alpha
+	bv5->bV5SizeImage = imgBytes;
+	bv5->bV5RedMask = 0x00FF0000;
+	bv5->bV5GreenMask = 0x0000FF00;
+	bv5->bV5BlueMask = 0x000000FF;
+	bv5->bV5AlphaMask = 0xFF000000;
+	bv5->bV5CSType = LCS_sRGB;
+	bv5->bV5Intent = LCS_GM_GRAPHICS;
+	CopyMemory(pv5 + sizeof(BITMAPV5HEADER), data, imgBytes);
+	GlobalUnlock(hDibV5);
+
+	// ---------- 3) 构造 CF_DIB（24bpp、BI_RGB、自下而上） ----------
+	// 老软件（比如 Illustrator 2020）只认最传统的这一种 DIB：注册格式 PNG 它不查，
+	// CF_DIBV5 它不认，32bpp + BI_BITFIELDS 和 top-down 也读不了。系统虽然能从 CF_DIBV5
+	// 合成出 CF_DIB，合成出来的仍是那份带 alpha 的 32 位数据，一样不合它的口味。
+	// 所以显式再放一份最保守的：丢掉 alpha 写成 24 位，行按 4 字节对齐，自下而上排列
+	DWORD dibRowBytes = ((DWORD)w * 3 + 3) & ~3u;
+	DWORD dibImgBytes = dibRowBytes * (DWORD)h;
+	HGLOBAL hDib = GlobalAlloc(GMEM_MOVEABLE, sizeof(BITMAPINFOHEADER) + dibImgBytes);
+	if (!hDib) { GlobalFree(hDibV5); GlobalFree(hPng); return; }
+	auto pDib = static_cast<BYTE*>(GlobalLock(hDib));
+	if (!pDib) { GlobalFree(hDib); GlobalFree(hDibV5); GlobalFree(hPng); return; }
+	auto bi = reinterpret_cast<BITMAPINFOHEADER*>(pDib);
+	*bi = {};
+	bi->biSize = sizeof(BITMAPINFOHEADER);
+	bi->biWidth = w;
+	bi->biHeight = h;                     // 正 = 自下而上
+	bi->biPlanes = 1;
+	bi->biBitCount = 24;
+	bi->biCompression = BI_RGB;
+	bi->biSizeImage = dibImgBytes;
+	auto dibPixels = pDib + sizeof(BITMAPINFOHEADER);
+	for (int row = 0; row < h; row++) {
+		auto src = data + (size_t)row * rowBytes;                 //入参是 top-down
+		auto dst = dibPixels + (size_t)(h - 1 - row) * dibRowBytes;
+		for (int col = 0; col < w; col++) {
+			dst[0] = src[0]; dst[1] = src[1]; dst[2] = src[2];     //BGRA -> BGR
+			src += 4;
+			dst += 3;
+		}
+	}
+	GlobalUnlock(hDib);
+
+	// ---------- 4) 写入剪切板 ----------
+	if (!OpenClipboard(nullptr)) {
+		GlobalFree(hDib);
+		GlobalFree(hDibV5);
+		GlobalFree(hPng);
+		return;
+	}
+	EmptyClipboard();
+	// SetClipboardData 成功后 HGLOBAL 归剪切板所有，不能再 GlobalFree；失败了才要自己释放
+	if (!SetClipboardData(CF_DIBV5, hDibV5)) {
+		GlobalFree(hDibV5);
+	}
+	if (!SetClipboardData(CF_DIB, hDib)) {
+		GlobalFree(hDib);
+	}
+	UINT cfPng = RegisterClipboardFormatW(L"PNG");
+	if (cfPng == 0 || !SetClipboardData(cfPng, hPng)) {
+		GlobalFree(hPng);
+	}
+	CloseClipboard();
+}
+
+bool Util::saveToFile(const std::wstring& path, const int w, const int h, BYTE* data)
+{
+	if (path.empty() || w <= 0 || h <= 0 || !data) return false;
+	ComPtr<IWICImagingFactory> factory;
+	auto hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(factory.GetAddressOf()));
+	if (FAILED(hr)) return false;
+	ComPtr<IWICStream> stream;
+	hr = factory->CreateStream(stream.GetAddressOf());
+	if (FAILED(hr)) return false;
+	hr = stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE);
+	if (FAILED(hr)) return false;
+	return encodePng(stream.Get(), w, h, data);
+}
+
+std::wstring Util::getSaveFilePath(HWND hwnd, const std::wstring& ext)
+{
+	std::wstring result;
+	ComPtr<IFileSaveDialog> saveDialog;
+	auto hr = CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(saveDialog.GetAddressOf()));
+	if (FAILED(hr)) return result;
+	DWORD dwFlags{ 0 };
+	saveDialog->GetOptions(&dwFlags);
+	saveDialog->SetOptions(dwFlags | FOS_OVERWRITEPROMPT | FOS_STRICTFILETYPES);
+	auto pattern = L"*." + ext;
+	auto typeName = Lang::get(L"util.file");
+	COMDLG_FILTERSPEC filterSpec[]{ { typeName.c_str(), pattern.c_str() } };
+	saveDialog->SetFileTypes(_countof(filterSpec), filterSpec);
+	saveDialog->SetFileTypeIndex(1);
+	saveDialog->SetDefaultExtension(ext.c_str());
+	auto fileName = createFileName(ext);
+	saveDialog->SetFileName(fileName.c_str());
+	// 用户取消时 Show 返回 HRESULT_FROM_WIN32(ERROR_CANCELLED)，一样走 FAILED 分支
+	hr = saveDialog->Show(hwnd);
+	if (FAILED(hr)) return result;
+	ComPtr<IShellItem> item;
+	hr = saveDialog->GetResult(item.GetAddressOf());
+	if (FAILED(hr)) return result;
+	PWSTR filePath{ nullptr };
+	hr = item->GetDisplayName(SIGDN_FILESYSPATH, &filePath);
+	if (FAILED(hr)) return result;
+	result = filePath;
+	CoTaskMemFree(filePath);
+	return result;
+}
+
+std::wstring Util::createFileName(const std::wstring& ext)
+{
+	SYSTEMTIME st;
+	GetLocalTime(&st);
+	return std::format(L"{:04d}{:02d}{:02d}{:02d}{:02d}{:02d}{:03d}.{}",
+		st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, ext);
+}
+
+std::vector<BYTE> Util::captureScreen(const int x, const int y, const int w, const int h)
+{
+	std::vector<BYTE> data;
+	if (w <= 0 || h <= 0) return data;
+	HDC hScreen = GetDC(nullptr);
+	HDC hDC = CreateCompatibleDC(hScreen);
+	HBITMAP hBitmap = CreateCompatibleBitmap(hScreen, w, h);
+	auto oldObj = SelectObject(hDC, hBitmap);
+	BitBlt(hDC, 0, 0, w, h, hScreen, x, y, SRCCOPY);
+	ReleaseDC(nullptr, hScreen);
+	data.resize((size_t)w * 4 * h);
+	BITMAPINFO bmi{};
+	bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	bmi.bmiHeader.biWidth = w;
+	// 负高度 = top-down，第一行就是屏幕最上面那行，省掉后续所有翻转
+	bmi.bmiHeader.biHeight = -h;
+	bmi.bmiHeader.biPlanes = 1;
+	bmi.bmiHeader.biBitCount = 32;
+	bmi.bmiHeader.biCompression = BI_RGB;
+	GetDIBits(hDC, hBitmap, 0, h, data.data(), &bmi, DIB_RGB_COLORS);
+	SelectObject(hDC, oldObj);
+	DeleteDC(hDC);
+	DeleteObject(hBitmap);
+	return data;
+}
+
+void Util::addFileToClipboard(const std::wstring& filePath)
+{
+	if (!OpenClipboard(nullptr)) return;
+	EmptyClipboard();
+	// DROPFILES 之后紧跟双 \0 结尾的路径列表，这里只放一条
+	auto totalSize = sizeof(DROPFILES) + (filePath.length() + 2) * sizeof(wchar_t);
+	auto hGlobal = GlobalAlloc(GMEM_MOVEABLE, totalSize);
+	if (!hGlobal) {
+		CloseClipboard();
+		return;
+	}
+	auto pDropFiles = static_cast<DROPFILES*>(GlobalLock(hGlobal));
+	if (!pDropFiles) {
+		GlobalFree(hGlobal);
+		CloseClipboard();
+		return;
+	}
+	pDropFiles->pFiles = sizeof(DROPFILES);
+	pDropFiles->fWide = TRUE;
+	auto dest = reinterpret_cast<wchar_t*>(pDropFiles + 1);
+	wcscpy_s(dest, filePath.length() + 1, filePath.c_str());
+	dest[filePath.length() + 1] = L'\0';
+	GlobalUnlock(hGlobal);
+	// 成功后 HGLOBAL 归剪切板所有，只在失败时自己释放
+	if (!SetClipboardData(CF_HDROP, hGlobal)) {
+		GlobalFree(hGlobal);
+	}
+	CloseClipboard();
+}
+
+bool Util::openWithImageReader(const int w, const int h, BYTE* data)
+{
+	auto exePath = findImageReader();
+	if (exePath.empty()) {
+		// 插件没装，直接把用户带到下载页，不再多弹一层提示
+		ShellExecute(nullptr, L"open", L"https://github.com/axing1218-source", nullptr, nullptr, SW_SHOWNORMAL);
+		return false;
+	}
+	auto imgPath = Setting::get()->getDataPath().append(L"ocr_" + createFileName(L"png")).wstring();
+	if (!saveToFile(imgPath, w, h, data)) return false;
+	// --del-image=true：插件读完自己把缓存图删掉，免得在数据目录里越攒越多
+	auto cmd = std::format(L"\"{}\" --image-path=\"{}\" --del-image=true", exePath.wstring(), imgPath);
+	// 工作目录设成插件所在目录，它才找得到自己身边的依赖
+	auto workDir = exePath.parent_path().wstring();
+	STARTUPINFO si{ .cb = sizeof(STARTUPINFO) };
+	PROCESS_INFORMATION pi{};
+	if (!CreateProcess(nullptr, cmd.data(), nullptr, nullptr, FALSE, 0, nullptr, workDir.data(), &si, &pi)) {
+		std::error_code ec;
+		std::filesystem::remove(imgPath, ec); //插件没起来，别留下垃圾文件
+		return false;
+	}
+	CloseHandle(pi.hThread);
+	CloseHandle(pi.hProcess);
+	return true;
+}
+
+std::wstring Util::decodeQrCode(const int w, const int h, BYTE* data)
+{
+    if (w <= 0 || h <= 0 || !data) return L"";
+
+    auto decodeGray = [](const std::vector<uint8_t>& gray, int gw, int gh) -> std::wstring {
+        if (gw <= 0 || gh <= 0 || gray.size() < (size_t)gw * gh) return L"";
+        auto qr = quirc_new();
+        if (!qr) return L"";
+        if (quirc_resize(qr, gw, gh) < 0) { quirc_destroy(qr); return L""; }
+        int bw = 0, bh = 0;
+        auto dst = quirc_begin(qr, &bw, &bh);
+        memcpy(dst, gray.data(), (size_t)gw * gh);
+        quirc_end(qr);
+
+        std::wstring out;
+        const int count = quirc_count(qr);
+        for (int i = 0; i < count; ++i) {
+            quirc_code code{};
+            quirc_data qrData{};
+            quirc_extract(qr, i, &code);
+            auto err = quirc_decode(&code, &qrData);
+            if (err == QUIRC_ERROR_DATA_ECC) {
+                quirc_flip(&code);
+                err = quirc_decode(&code, &qrData);
+            }
+            if (err != QUIRC_SUCCESS) continue;
+            auto text = qrPayloadToWStr(qrData.payload, qrData.payload_len, qrData.data_type);
+            if (text.empty()) continue;
+            if (!out.empty()) out += L"\n";
+            out += text;
+        }
+        quirc_destroy(qr);
+        return out;
+    };
+
+    std::vector<uint8_t> gray((size_t)w * h);
+    std::array<unsigned long long, 256> hist{};
+    for (size_t i = 0; i < gray.size(); ++i) {
+        auto px = data + i * 4; // BGRA
+        uint8_t g = (uint8_t)((px[2] * 77 + px[1] * 150 + px[0] * 29) >> 8);
+        gray[i] = g;
+        ++hist[g];
+    }
+
+    // Fast path: preserve existing behaviour first.
+    if (auto text = decodeGray(gray, w, h); !text.empty()) return text;
+
+    auto addQuietZone = [](const std::vector<uint8_t>& src, int sw, int sh, int pad, uint8_t bg,
+                           int& ow, int& oh) {
+        ow = sw + pad * 2; oh = sh + pad * 2;
+        std::vector<uint8_t> dst((size_t)ow * oh, bg);
+        for (int y = 0; y < sh; ++y)
+            memcpy(dst.data() + (size_t)(y + pad) * ow + pad,
+                   src.data() + (size_t)y * sw, (size_t)sw);
+        return dst;
+    };
+
+    // Tight screenshot selections often cut away QR's required quiet zone.
+    {
+        int pw = 0, ph = 0;
+        int pad = std::clamp(std::min(w, h) / 12, 12, 48);
+        auto padded = addQuietZone(gray, w, h, pad, 255, pw, ph);
+        if (auto text = decodeGray(padded, pw, ph); !text.empty()) return text;
+    }
+
+    // Otsu threshold restores square modules that were softened by chat-app scaling.
+    unsigned long long total = (unsigned long long)w * h;
+    unsigned long long sum = 0;
+    for (int i = 0; i < 256; ++i) sum += (unsigned long long)i * hist[i];
+    unsigned long long wB = 0, sumB = 0;
+    double best = -1.0;
+    int threshold = 128;
+    for (int t = 0; t < 255; ++t) {
+        wB += hist[t];
+        if (!wB) continue;
+        const auto wF = total - wB;
+        if (!wF) break;
+        sumB += (unsigned long long)t * hist[t];
+        const double mB = (double)sumB / wB;
+        const double mF = (double)(sum - sumB) / wF;
+        const double between = (double)wB * (double)wF * (mB - mF) * (mB - mF);
+        if (between > best) { best = between; threshold = t; }
+    }
+
+    std::vector<uint8_t> binary(gray.size()), inverted(gray.size());
+    for (size_t i = 0; i < gray.size(); ++i) {
+        binary[i] = gray[i] <= threshold ? 0 : 255;
+        inverted[i] = 255 - binary[i];
+    }
+    if (auto text = decodeGray(binary, w, h); !text.empty()) return text;
+    if (auto text = decodeGray(inverted, w, h); !text.empty()) return text;
+
+    // Small QR codes benefit from integer nearest-neighbour enlargement: no new
+    // information is invented, but quirc gets several pixels per module again.
+    int factor = 1;
+    const int minSide = std::min(w, h), maxSide = std::max(w, h);
+    if (minSide < 180) factor = 4;
+    else if (minSide < 360) factor = 3;
+    else if (minSide < 700) factor = 2;
+    while (factor > 1 && (maxSide * factor > 2800 || (long long)w * h * factor * factor > 8000000LL)) --factor;
+
+    if (factor > 1) {
+        auto upscale = [factor](const std::vector<uint8_t>& src, int sw, int sh, int& ow, int& oh) {
+            ow = sw * factor; oh = sh * factor;
+            std::vector<uint8_t> dst((size_t)ow * oh);
+            for (int y = 0; y < oh; ++y) {
+                const int sy = y / factor;
+                for (int x = 0; x < ow; ++x) dst[(size_t)y * ow + x] = src[(size_t)sy * sw + x / factor];
+            }
+            return dst;
+        };
+        int uw = 0, uh = 0;
+        auto up = upscale(binary, w, h, uw, uh);
+        int pw = 0, ph = 0;
+        const int pad = std::clamp(16 * factor, 24, 96);
+        auto padded = addQuietZone(up, uw, uh, pad, 255, pw, ph);
+        if (auto text = decodeGray(padded, pw, ph); !text.empty()) return text;
+
+        for (auto& v : up) v = 255 - v;
+        auto paddedInv = addQuietZone(up, uw, uh, pad, 255, pw, ph);
+        if (auto text = decodeGray(paddedInv, pw, ph); !text.empty()) return text;
+    }
+
+    return L"";
+}
+
+
+

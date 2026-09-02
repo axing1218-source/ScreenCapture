@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1093 1093" role="img" aria-label="StarCap five-colour star logo">
+  <title>StarCap</title>
+  <desc>Five separated geometric star points: blue, red, green, orange and yellow.</desc>
+  <g stroke="none">
+    <polygon fill="#0081FD" points="547,100 438,418 541,575 653,421"/>
+    <polygon fill="#F93132" points="76,425 353,632 515,589 408,426"/>
+    <polygon fill="#18B44F" points="1017,425 684,426 577,589 739,632"/>
+    <polygon fill="#FE7201" points="528,617 359,662 252,991 530,786"/>
+    <polygon fill="#FEBD02" points="564,616 558,784 837,992 732,661"/>
+  </g>
+</svg>

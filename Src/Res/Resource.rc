@@ -1,0 +1,43 @@
+﻿#define APSTUDIO_READONLY_SYMBOLS
+#include "winres.h"
+#include "../Version.h"
+#undef APSTUDIO_READONLY_SYMBOLS
+1 ICON "logo.ico"
+2 ICON "tray.ico"
+icon.ttf RCDATA "iconfont.ttf"
+zh-CN RCDATA "../../Lang/简体中文.zh-CN.json"
+en-US RCDATA "../../Lang/English.en-US.json"
+
+// StarCap executable metadata. Version values are centralized in Version.h.
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION STARCAP_FILE_VERSION
+PRODUCTVERSION STARCAP_FILE_VERSION
+FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+FILEFLAGS 0x1L
+#else
+FILEFLAGS 0x0L
+#endif
+FILEOS 0x40004L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "080404b0"
+        BEGIN
+            VALUE "CompanyName", "阿星"
+            VALUE "FileDescription", "StarCap"
+            VALUE "FileVersion", STARCAP_FILE_VERSION_STR
+            VALUE "InternalName", "StarCap.exe"
+            VALUE "LegalCopyright", "Copyright (C) 阿星 2026"
+            VALUE "OriginalFilename", "StarCap.exe"
+            VALUE "ProductName", "StarCap"
+            VALUE "ProductVersion", STARCAP_FILE_VERSION_STR
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x804, 1200
+    END
+END
