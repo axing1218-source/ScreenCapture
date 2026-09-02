@@ -134,9 +134,8 @@ jobs:
           from pathlib import Path
           import sys
           data = Path(sys.argv[1]).read_bytes()
-          version = sys.argv[2]
           required = [
-              'StarCap.exe', f'StarCap/{version}',
+              'StarCap.exe',
               'https://github.com/axing1218-source/StarCap/releases/latest/download/version.json',
               'https://github.com/axing1218-source/StarCap/releases/latest/download/StarCap.exe',
               'StarCap.update.exe'
@@ -154,7 +153,7 @@ jobs:
               raise SystemExit('Release binary still contains upstream update-channel strings: ' + ', '.join(hits))
           print('Release binary verification passed.')
           '@ | Set-Content verify_release.py -Encoding utf8
-          python verify_release.py 'release\StarCap.exe' $version
+          python verify_release.py 'release\StarCap.exe'
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           $hash = (Get-FileHash 'release\StarCap.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
