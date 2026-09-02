@@ -1,0 +1,44 @@
+name: Fix StarCap AI Settings Model UI
+
+on:
+  push:
+    branches:
+      - starcap-v0.9.8-ai-providers
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event.head_commit.message != 'Fix AI settings model refresh and selection'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: starcap-v0.9.8-ai-providers
+
+      - name: Apply fixes
+        run: python tools/fix_ai_settings_model_ui.py
+
+      - name: Verify patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -q 'getAiModels' Src/Setting.h
+          grep -q '__next_page__' Src/Win/WinSettingCommon.cpp
+          grep -q 'maxOutputTokens.*256' Src/GeminiClient.h
+          grep -q 'gemini-3.5-flash-lite.*gemini-3.5-flash.*gemini-3.6-flash.*gemini-3.7-flash' Src/AIClient.h
+          if grep -q 'model.rfind(L"gemini-", 0) == 0' Src/AIClient.h; then exit 1; fi
+          git diff --stat
+
+      - name: Commit source fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'axing1218-source'
+          git config user.email 'axing1218@gmail.com'
+          git add Src/Setting.h Src/Setting.cpp Src/AIClient.h Src/GeminiClient.h Src/Win/WinSettingCommon.h Src/Win/WinSettingCommon.cpp
+          git commit -m 'Fix AI settings model refresh and selection'
+          git push origin HEAD:starcap-v0.9.8-ai-providers
