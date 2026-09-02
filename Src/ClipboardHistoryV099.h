@@ -1,8 +1,8 @@
 #pragma once
 
-// StarCap v0.9.9 clipboard presentation layer - clean rebuild.
-// Storage, capture, filtering, restore, context menu and keyboard behavior stay
-// in ClipboardHistoryImpl.h. This file owns only the standalone clipboard UI.
+// StarCap v0.9.9 clipboard presentation layer.
+// Clipboard storage/capture and item actions remain in ClipboardHistoryImpl.h.
+// This file owns the standalone light UI, its custom frame content and list UX.
 
 namespace ClipboardHistory
 {
@@ -12,7 +12,11 @@ namespace ClipboardHistory
     inline HBRUSH v099ListBrush{ nullptr };
     inline HBRUSH v099SearchBrush{ nullptr };
     inline HFONT v099TitleFont{ nullptr };
+    inline HFONT v099IconFont{ nullptr };
     inline int v099LastWidth{ 0 };
+    inline bool v099ScrollDragging{ false };
+    inline int v099ScrollDragOffset{ 0 };
+    inline bool v099ScrollHover{ false };
 
     static constexpr int V099_TOP_H = 70;
     static constexpr int V099_TABS_H = 50;
@@ -39,7 +43,6 @@ namespace ClipboardHistory
         v099ListBrush = CreateSolidBrush(v099Canvas());
         v099SearchBrush = CreateSolidBrush(v099Surface());
 
-        // Legacy searchProc uses editBrush for the EDIT control.
         if (editBrush) DeleteObject(editBrush);
         editBrush = CreateSolidBrush(v099Surface());
     }
@@ -60,6 +63,11 @@ namespace ClipboardHistory
             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Segoe UI Symbol");
         v099TitleFont = CreateFontW(px(13), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
             OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH, L"Microsoft YaHei UI");
+
+        // Use Windows' vector icon font instead of hand-drawn GDI primitives. This removes
+        // the visible stair-step edges on the clipboard and search icons at 100%-150% DPI.
+        v099IconFont = CreateFontW(px(14), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY, DEFAULT_PITCH, L"Segoe MDL2 Assets");
     }
 
     inline RECT v099CloseRect(const RECT& client)
@@ -100,21 +108,6 @@ namespace ClipboardHistory
         return { x, 78, x + widths[index], 112 };
     }
 
-    inline void v099DrawMagnifier(HDC dc, RECT r, COLORREF color)
-    {
-        HPEN pen = CreatePen(PS_SOLID, 1, color);
-        auto oldP = SelectObject(dc, pen);
-        auto oldB = SelectObject(dc, GetStockObject(NULL_BRUSH));
-        const int cx = r.left + 13;
-        const int cy = (r.top + r.bottom) / 2 - 1;
-        Ellipse(dc, cx - 5, cy - 5, cx + 5, cy + 5);
-        MoveToEx(dc, cx + 4, cy + 4, nullptr);
-        LineTo(dc, cx + 9, cy + 9);
-        SelectObject(dc, oldB);
-        SelectObject(dc, oldP);
-        DeleteObject(pen);
-    }
-
     inline void v099DrawButton(HDC dc, RECT r, const std::wstring& label, bool active = false, bool danger = false)
     {
         const COLORREF bg = active ? v099PrimarySoft() : v099Surface();
@@ -130,7 +123,9 @@ namespace ClipboardHistory
 
         RECT logo{ 20, 18, 54, 52 };
         fillRoundRect(dc, logo, v099Primary(), 8);
-        drawText(dc, L"▣", logo, RGB(255,255,255), boldFont, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        // E77F is the MDL2 clipboard/paste symbol. Font rendering is antialiased by Windows.
+        drawText(dc, L"\xE77F", logo, RGB(255,255,255), v099IconFont ? v099IconFont : boldFont,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
         RECT title{ 64, 11, 146, 39 };
         drawText(dc, L"剪贴板", title, v099Text(), v099TitleFont ? v099TitleFont : boldFont,
@@ -142,7 +137,9 @@ namespace ClipboardHistory
         if (!multiMode) {
             RECT search = v099SearchOuterRect(client);
             fillRoundRect(dc, search, v099Surface(), 10);
-            v099DrawMagnifier(dc, search, v099Faint());
+            RECT searchIcon{ search.left + 4, search.top, search.left + 31, search.bottom };
+            drawText(dc, L"\xE721", searchIcon, v099Faint(), v099IconFont ? v099IconFont : uiFont,
+                DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
         else {
             RECT bar = v099SearchOuterRect(client);
@@ -211,13 +208,11 @@ namespace ClipboardHistory
     {
         RECT page{ x, y, x + 20, y + 24 };
         const auto ext = path.extension().wstring();
-
         if (_wcsicmp(ext.c_str(), L".pdf") == 0) {
             fillRoundRect(dc, page, RGB(232, 67, 82), 4);
             drawText(dc, L"P", page, RGB(255,255,255), smallFont, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             return;
         }
-
         fillRoundRect(dc, page, v099Surface(), 4);
         strokeRoundRect(dc, page, v099Border(), 1, 4);
         RECT mark{ page.left + 5, page.top + 6, page.right - 5, page.bottom - 6 };
@@ -265,7 +260,7 @@ namespace ClipboardHistory
         fillRect(dis->hDC, rc, v099Canvas());
 
         RECT card = rc;
-        card.left += 8; card.right -= 8;
+        card.left += 8; card.right -= 12; // leave a little breathing room for the floating thumb
         card.top += 6; card.bottom -= 6;
 
         const COLORREF cardBg = (active || selected) ? v099Selected() : (hovered ? v099Hover() : v099Card());
@@ -343,6 +338,95 @@ namespace ClipboardHistory
         }
     }
 
+    inline int v099TotalContentHeight()
+    {
+        int total = 0;
+        for (size_t realIndex : visibleItems) {
+            if (realIndex < items.size()) total += v099ItemHeight(items[realIndex]);
+        }
+        return total;
+    }
+
+    inline int v099TopContentOffset(HWND hwnd)
+    {
+        int topIndex = (int)SendMessageW(hwnd, LB_GETTOPINDEX, 0, 0);
+        if (topIndex <= 0) return 0;
+        int offset = 0;
+        const int limit = std::min(topIndex, (int)visibleItems.size());
+        for (int i = 0; i < limit; ++i) {
+            const size_t real = visibleItems[(size_t)i];
+            if (real < items.size()) offset += v099ItemHeight(items[real]);
+        }
+        return offset;
+    }
+
+    inline RECT v099ScrollThumbRect(HWND hwnd)
+    {
+        RECT empty{ 0,0,0,0 };
+        if (!hwnd || visibleItems.empty()) return empty;
+        RECT rc{}; GetClientRect(hwnd, &rc);
+        const int viewH = std::max(1, (int)rc.bottom);
+        const int totalH = v099TotalContentHeight();
+        if (totalH <= viewH + 2) return empty;
+
+        const int topPad = 7;
+        const int bottomPad = 7;
+        const int trackH = std::max(1, viewH - topPad - bottomPad);
+        const int thumbH = std::clamp((viewH * trackH) / std::max(1, totalH), 34, trackH);
+        const int maxScroll = std::max(1, totalH - viewH);
+        const int scroll = std::clamp(v099TopContentOffset(hwnd), 0, maxScroll);
+        const int travel = std::max(1, trackH - thumbH);
+        const int y = topPad + (int)((long long)travel * scroll / maxScroll);
+
+        return { rc.right - 7, y, rc.right - 3, y + thumbH };
+    }
+
+    inline void v099DrawFloatingScrollbar(HWND hwnd)
+    {
+        RECT thumb = v099ScrollThumbRect(hwnd);
+        if (thumb.bottom <= thumb.top) return;
+        HDC dc = GetDC(hwnd);
+        if (!dc) return;
+        const COLORREF c = (v099ScrollDragging || v099ScrollHover)
+            ? RGB(150, 155, 162) : RGB(190, 194, 200);
+        fillRoundRect(dc, thumb, c, 4);
+        ReleaseDC(hwnd, dc);
+    }
+
+    inline int v099TopIndexForContentOffset(int targetOffset)
+    {
+        if (visibleItems.empty()) return 0;
+        int y = 0;
+        for (int i = 0; i < (int)visibleItems.size(); ++i) {
+            const size_t real = visibleItems[(size_t)i];
+            const int h = real < items.size() ? v099ItemHeight(items[real]) : 96;
+            if (targetOffset < y + h / 2) return i;
+            y += h;
+        }
+        return std::max(0, (int)visibleItems.size() - 1);
+    }
+
+    inline void v099ScrollThumbTo(HWND hwnd, int thumbTop)
+    {
+        RECT rc{}; GetClientRect(hwnd, &rc);
+        RECT thumb = v099ScrollThumbRect(hwnd);
+        if (thumb.bottom <= thumb.top) return;
+
+        const int viewH = std::max(1, (int)rc.bottom);
+        const int totalH = v099TotalContentHeight();
+        const int maxScroll = std::max(0, totalH - viewH);
+        if (maxScroll <= 0) return;
+
+        const int thumbH = thumb.bottom - thumb.top;
+        const int topPad = 7;
+        const int travel = std::max(1, viewH - topPad - 7 - thumbH);
+        const int clampedTop = std::clamp(thumbTop, topPad, topPad + travel);
+        const int targetOffset = (int)((long long)(clampedTop - topPad) * maxScroll / travel);
+        const int index = v099TopIndexForContentOffset(targetOffset);
+        SendMessageW(hwnd, LB_SETTOPINDEX, index, 0);
+        InvalidateRect(hwnd, nullptr, TRUE);
+    }
+
     inline void v099Layout(HWND hwnd)
     {
         if (!hwnd) return;
@@ -356,13 +440,11 @@ namespace ClipboardHistory
         if (searchWnd) {
             RECT outer = v099SearchOuterRect(rc);
             if (!multiMode) {
-                MoveWindow(searchWnd, outer.left + 30, outer.top + 5,
-                    std::max(80, outer.right - outer.left - 40), outer.bottom - outer.top - 10, TRUE);
+                MoveWindow(searchWnd, outer.left + 31, outer.top + 5,
+                    std::max(80, outer.right - outer.left - 41), outer.bottom - outer.top - 10, TRUE);
                 ShowWindow(searchWnd, SW_SHOW);
             }
-            else {
-                ShowWindow(searchWnd, SW_HIDE);
-            }
+            else ShowWindow(searchWnd, SW_HIDE);
         }
 
         if (clearWnd) ShowWindow(clearWnd, SW_HIDE);
@@ -401,6 +483,7 @@ namespace ClipboardHistory
                     SendMessageW(listWnd, LB_SETCURSEL, next, 0);
                     SendMessageW(listWnd, LB_SETTOPINDEX, std::max(0, next - 3), 0);
                     SetFocus(listWnd);
+                    InvalidateRect(listWnd, nullptr, TRUE);
                 }
                 return 0;
             }
@@ -410,13 +493,85 @@ namespace ClipboardHistory
 
     inline LRESULT CALLBACK v099ListProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
+        if (msg == WM_MOUSEWHEEL) {
+            const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+            const int steps = delta / WHEEL_DELTA;
+            const int top = (int)SendMessageW(hwnd, LB_GETTOPINDEX, 0, 0);
+            const int next = std::clamp(top - steps * 2, 0, std::max(0, (int)visibleItems.size() - 1));
+            SendMessageW(hwnd, LB_SETTOPINDEX, next, 0);
+            InvalidateRect(hwnd, nullptr, TRUE);
+            return 0;
+        }
+
+        if (msg == WM_LBUTTONDOWN) {
+            POINT p{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            RECT rc{}; GetClientRect(hwnd, &rc);
+            RECT thumb = v099ScrollThumbRect(hwnd);
+            RECT hit = thumb;
+            hit.left = std::max(0L, rc.right - 13);
+            hit.right = rc.right;
+
+            if (thumb.bottom > thumb.top && pointIn(hit, p)) {
+                if (p.y >= thumb.top && p.y < thumb.bottom) {
+                    v099ScrollDragOffset = p.y - thumb.top;
+                }
+                else {
+                    v099ScrollDragOffset = (thumb.bottom - thumb.top) / 2;
+                    v099ScrollThumbTo(hwnd, p.y - v099ScrollDragOffset);
+                }
+                v099ScrollDragging = true;
+                SetCapture(hwnd);
+                InvalidateRect(hwnd, nullptr, FALSE);
+                return 0;
+            }
+        }
+
+        if (msg == WM_MOUSEMOVE) {
+            POINT p{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            if (v099ScrollDragging) {
+                v099ScrollThumbTo(hwnd, p.y - v099ScrollDragOffset);
+                return 0;
+            }
+
+            RECT rc{}; GetClientRect(hwnd, &rc);
+            const bool hover = p.x >= rc.right - 13;
+            if (hover != v099ScrollHover) {
+                v099ScrollHover = hover;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+        }
+
+        if (msg == WM_LBUTTONUP && v099ScrollDragging) {
+            v099ScrollDragging = false;
+            if (GetCapture() == hwnd) ReleaseCapture();
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+
+        if (msg == WM_CAPTURECHANGED) v099ScrollDragging = false;
+
         LRESULT result = ClipboardHistoryLegacy::listProc(hwnd, msg, wParam, lParam);
+
+        if (msg == WM_LBUTTONUP) {
+            // The native LISTBOX receives WM_LBUTTONDOWN before our legacy click handler,
+            // so it starts mouse capture. The legacy handler intentionally consumes the
+            // matching button-up. Explicitly release that capture here; otherwise Windows
+            // keeps the list in its drag/autoscroll state and simply moving the pointer to
+            // the top/bottom edge scrolls the clipboard as if the middle button were held.
+            if (GetCapture() == hwnd) ReleaseCapture();
+        }
+
+        if (msg == WM_PAINT) {
+            v099DrawFloatingScrollbar(hwnd);
+        }
+
         if (msg == WM_KEYDOWN || msg == WM_LBUTTONUP || msg == WM_LBUTTONDBLCLK ||
             msg == WM_RBUTTONUP || msg == WM_CHAR) {
             if (historyWnd) {
                 v099Layout(historyWnd);
                 InvalidateRect(historyWnd, nullptr, FALSE);
             }
+            InvalidateRect(hwnd, nullptr, FALSE);
         }
         return result;
     }
@@ -427,15 +582,14 @@ namespace ClipboardHistory
         case WM_CREATE:
         {
             historyWnd = hwnd;
-
-            // Clipboard UI is intentionally light-only in this rebuild.
             themeMode = ThemeMode::Light;
-
             v099EnsureFonts(hwnd);
             v099SyncBrushes();
 
+            // Do not ask Windows for a native scrollbar. The list paints a 4px floating
+            // thumb on top of the content instead, with no track/background strip.
             listWnd = CreateWindowExW(0, L"LISTBOX", L"",
-                WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_TABSTOP |
+                WS_CHILD | WS_VISIBLE | WS_TABSTOP |
                 LBS_NOTIFY | LBS_OWNERDRAWVARIABLE | LBS_NOINTEGRALHEIGHT,
                 0,0,0,0, hwnd, reinterpret_cast<HMENU>((INT_PTR)ID_LIST), GetModuleHandleW(nullptr), nullptr);
 
@@ -498,14 +652,12 @@ namespace ClipboardHistory
             const bool widthChanged = std::abs(width - v099LastWidth) > 80;
             v099LastWidth = width;
             v099Layout(hwnd);
-            if (widthChanged && listWnd && !visibleItems.empty()) {
+            if (widthChanged && listWnd && !visibleItems.empty())
                 InvalidateRect(listWnd, nullptr, TRUE);
-            }
             return 0;
         }
 
-        case WM_ERASEBKGND:
-            return 1;
+        case WM_ERASEBKGND: return 1;
 
         case WM_CTLCOLORLISTBOX:
         {
@@ -529,8 +681,7 @@ namespace ClipboardHistory
             if (mi && mi->CtlID == ID_LIST) {
                 if (mi->itemID < visibleItems.size())
                     mi->itemHeight = v099ItemHeight(items[visibleItems[mi->itemID]]);
-                else
-                    mi->itemHeight = 100;
+                else mi->itemHeight = 100;
                 return TRUE;
             }
             break;
@@ -548,16 +699,9 @@ namespace ClipboardHistory
 
         case WM_COMMAND:
         {
-            UINT id = LOWORD(wParam);
-            UINT code = HIWORD(wParam);
-            if (id == ID_SEARCH && code == EN_CHANGE) {
-                refreshList();
-                return 0;
-            }
-            if (id == ID_CLEAR_FLOAT && code == BN_CLICKED) {
-                clearAll();
-                return 0;
-            }
+            UINT id = LOWORD(wParam), code = HIWORD(wParam);
+            if (id == ID_SEARCH && code == EN_CHANGE) { refreshList(); return 0; }
+            if (id == ID_CLEAR_FLOAT && code == BN_CLICKED) { clearAll(); return 0; }
             break;
         }
 
@@ -568,23 +712,13 @@ namespace ClipboardHistory
 
             if (pointIn(v099CloseRect(rc), p)) {
                 if (fullWnd && IsWindow(fullWnd)) ShowWindow(fullWnd, SW_HIDE);
-                ShowWindow(hwnd, SW_HIDE);
-                return 0;
+                ShowWindow(hwnd, SW_HIDE); return 0;
             }
-            if (pointIn(v099ClearRect(rc), p)) {
-                clearAll();
-                return 0;
-            }
-            if (pointIn(v099PinRect(rc), p)) {
-                v099SetPinned(hwnd);
-                return 0;
-            }
+            if (pointIn(v099ClearRect(rc), p)) { clearAll(); return 0; }
+            if (pointIn(v099PinRect(rc), p)) { v099SetPinned(hwnd); return 0; }
             if (pointIn(v099MultiRect(rc), p)) {
                 multiMode = !multiMode;
-                if (!multiMode) {
-                    multiHashes.clear();
-                    multiAnchor = -1;
-                }
+                if (!multiMode) { multiHashes.clear(); multiAnchor = -1; }
                 v099Layout(hwnd);
                 if (listWnd) InvalidateRect(listWnd, nullptr, TRUE);
                 return 0;
@@ -592,9 +726,7 @@ namespace ClipboardHistory
 
             for (int i = 0; i < 5; ++i) {
                 if (pointIn(v099TabRect(rc, i), p)) {
-                    setTab((Tab)i);
-                    v099Layout(hwnd);
-                    return 0;
+                    setTab((Tab)i); v099Layout(hwnd); return 0;
                 }
             }
 
@@ -603,19 +735,10 @@ namespace ClipboardHistory
                 RECT copy{ bar.right - 190, bar.top + 3, bar.right - 132, bar.bottom - 3 };
                 RECT paste{ bar.right - 126, bar.top + 3, bar.right - 68, bar.bottom - 3 };
                 RECT exit{ bar.right - 62, bar.top + 3, bar.right - 6, bar.bottom - 3 };
-
-                if (pointIn(copy, p)) {
-                    copyMulti(false);
-                    return 0;
-                }
-                if (pointIn(paste, p)) {
-                    copyMulti(true);
-                    return 0;
-                }
+                if (pointIn(copy, p)) { copyMulti(false); return 0; }
+                if (pointIn(paste, p)) { copyMulti(true); return 0; }
                 if (pointIn(exit, p)) {
-                    multiMode = false;
-                    multiHashes.clear();
-                    multiAnchor = -1;
+                    multiMode = false; multiHashes.clear(); multiAnchor = -1;
                     v099Layout(hwnd);
                     if (listWnd) InvalidateRect(listWnd, nullptr, TRUE);
                     return 0;
@@ -625,22 +748,16 @@ namespace ClipboardHistory
         }
 
         case WM_SETTINGCHANGE:
-            // Deliberately ignore OS dark-mode changes for this light-only clipboard window.
             return 0;
 
         case WM_CLOSE:
             if (fullWnd && IsWindow(fullWnd)) ShowWindow(fullWnd, SW_HIDE);
-            ShowWindow(hwnd, SW_HIDE);
-            return 0;
+            ShowWindow(hwnd, SW_HIDE); return 0;
 
         case WM_DESTROY:
-            historyWnd = nullptr;
-            listWnd = nullptr;
-            searchWnd = nullptr;
-            clearWnd = nullptr;
-            fullWnd = nullptr;
-            oldListProc = nullptr;
-            oldSearchProc = nullptr;
+            historyWnd = nullptr; listWnd = nullptr; searchWnd = nullptr; clearWnd = nullptr;
+            fullWnd = nullptr; oldListProc = nullptr; oldSearchProc = nullptr;
+            v099ScrollDragging = false; v099ScrollHover = false;
             return 0;
 
         case WM_PAINT:
@@ -663,7 +780,6 @@ namespace ClipboardHistory
     {
         ClipboardHistoryLegacy::init();
         if (v099UiClassRegistered) return;
-
         WNDCLASSW wc{};
         wc.lpfnWndProc = historyProc;
         wc.hInstance = GetModuleHandleW(nullptr);
@@ -684,7 +800,6 @@ namespace ClipboardHistory
         if (!historyWnd) {
             RECT work{};
             SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
-
             const int workW = (int)(work.right - work.left);
             const int workH = (int)(work.bottom - work.top);
             const int ww = std::min(980, std::max(760, workW - 180));
@@ -694,14 +809,12 @@ namespace ClipboardHistory
 
             DWORD style = WS_POPUP | WS_THICKFRAME | WS_MINIMIZEBOX |
                 WS_MAXIMIZEBOX | WS_SYSMENU | WS_CLIPCHILDREN;
-
             historyWnd = CreateWindowExW(WS_EX_TOOLWINDOW,
                 L"StarCapClipboardHistoryV099", L"StarCap 剪贴板",
                 style, x, y, ww, wh, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
         }
 
         if (!historyWnd) return;
-
         refreshList();
         v099Layout(historyWnd);
         ShowWindow(historyWnd, SW_SHOW);
@@ -721,18 +834,10 @@ namespace ClipboardHistory
 
     inline void dispose()
     {
-        if (v099ListBrush) {
-            DeleteObject(v099ListBrush);
-            v099ListBrush = nullptr;
-        }
-        if (v099SearchBrush) {
-            DeleteObject(v099SearchBrush);
-            v099SearchBrush = nullptr;
-        }
-        if (v099TitleFont) {
-            DeleteObject(v099TitleFont);
-            v099TitleFont = nullptr;
-        }
+        if (v099ListBrush) { DeleteObject(v099ListBrush); v099ListBrush = nullptr; }
+        if (v099SearchBrush) { DeleteObject(v099SearchBrush); v099SearchBrush = nullptr; }
+        if (v099TitleFont) { DeleteObject(v099TitleFont); v099TitleFont = nullptr; }
+        if (v099IconFont) { DeleteObject(v099IconFont); v099IconFont = nullptr; }
         ClipboardHistoryLegacy::dispose();
     }
 }
