@@ -1,42 +1,21 @@
-name: StarCap Direct Source Build
+name: StarCap Release
 
 on:
   workflow_dispatch:
   push:
     branches:
       - main
-      - starcap-v0.9.7
-      - starcap-source-cleanup
+
+permissions:
+  contents: write
 
 jobs:
-  build:
+  release:
     runs-on: windows-latest
 
     steps:
       - name: Checkout StarCap
         uses: actions/checkout@v4
-
-      - name: Verify StarCap source identity
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          $legacyIdentifiers = git grep -n -E 'WeShot(Diag|TextGeometry|ParagraphLayout|Ocr|OcrV2|CaptureTranslate)|WESHOT_(FILE_VERSION|FILE_VERSION_STR|DISPLAY_VERSION)' -- Src 2>$null
-          if ($LASTEXITCODE -eq 0 -and $legacyIdentifiers) {
-            Write-Host $legacyIdentifiers
-            throw 'Legacy WeShot internal identifiers remain in active source.'
-          }
-
-          $legacyProjectNames = git grep -n -E 'ScreenCapture\.vcxproj|ScreenCapture\.slnx' -- Src StarCap.slnx .github/workflows/starcap-direct-build.yml 2>$null
-          if ($LASTEXITCODE -eq 0 -and $legacyProjectNames) {
-            Write-Host $legacyProjectNames
-            throw 'Legacy ScreenCapture project filenames remain in active project files.'
-          }
-
-          if (-not (Test-Path 'Src\StarCap.vcxproj')) { throw 'Src\StarCap.vcxproj is missing.' }
-          if (-not (Test-Path 'StarCap.slnx')) { throw 'StarCap.slnx is missing.' }
-          Write-Host 'StarCap source identity verification passed.'
-          exit 0
 
       - name: Resolve StarCap version
         id: version
@@ -47,16 +26,41 @@ jobs:
           $match = [regex]::Match($text, 'STARCAP_DISPLAY_VERSION\s+L"v([0-9]+\.[0-9]+\.[0-9]+)"')
           if (-not $match.Success) { throw 'Unable to resolve STARCAP_DISPLAY_VERSION.' }
           $version = $match.Groups[1].Value
+
           $json = Get-Content 'Doc\version.json' -Raw | ConvertFrom-Json
           $jsonVersion = ($json.version -join '.')
-          if ($jsonVersion -ne $version) { throw "Version mismatch: Version.h=$version, Doc/version.json=$jsonVersion" }
+          if ($jsonVersion -ne $version) {
+            throw "Version mismatch: Version.h=$version, Doc/version.json=$jsonVersion"
+          }
+
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          Write-Host "StarCap version: $version"
+          "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Release candidate: StarCap v$version"
+
+      - name: Check whether release already exists
+        id: existing
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ steps.version.outputs.tag }}'
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            "exists=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            Write-Host "$tag already exists; release build is not needed."
+          }
+          else {
+            "exists=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+            Write-Host "$tag does not exist; building a release."
+            $global:LASTEXITCODE = 0
+          }
 
       - name: Setup MSBuild
+        if: steps.existing.outputs.exists != 'true'
         uses: microsoft/setup-msbuild@v2
 
       - name: Prepare pinned Ling dependency
+        if: steps.existing.outputs.exists != 'true'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
@@ -73,7 +77,6 @@ jobs:
           if ($actualLingCommit -ne $lingCommit) {
             throw "Ling checkout mismatch: expected $lingCommit, got $actualLingCommit"
           }
-          Write-Host "Using pinned Ling commit $actualLingCommit"
 
           $util = Get-Content D:\project\Ling\include\Util.h -Raw
           $util = $util.Replace('constexpr auto gen = [](size_t i, size_t idx) {', 'constexpr auto gen = [](std::wstring_view chars, size_t i, size_t idx) {')
@@ -93,6 +96,7 @@ jobs:
           Set-Content $lingAppPath $lingApp -Encoding utf8
 
       - name: Build Yoga and Ling
+        if: steps.existing.outputs.exists != 'true'
         shell: pwsh
         run: |
           msbuild D:\project\Ling\yoga\yoga.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=D:\project\Ling\
@@ -100,31 +104,38 @@ jobs:
           msbuild D:\project\Ling\Ling.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=D:\project\Ling\
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Build StarCap directly from repository source
+      - name: Build StarCap release
+        if: steps.existing.outputs.exists != 'true'
         shell: pwsh
         run: |
           msbuild Src\StarCap.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=${{ github.workspace }}\
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Verify direct-build executable
+      - name: Prepare and verify release assets
+        if: steps.existing.outputs.exists != 'true'
         shell: pwsh
         run: |
-          $exe = Get-ChildItem -Path . -Recurse -Filter StarCap.exe | Where-Object { $_.FullName -match 'Release' } | Select-Object -First 1
-          if (-not $exe) { throw 'StarCap.exe direct build output was not produced.' }
+          $ErrorActionPreference = 'Stop'
+          $version = '${{ steps.version.outputs.version }}'
+          $exe = 'x64\Release\StarCap.exe'
+          if (-not (Test-Path $exe)) { throw 'StarCap.exe was not produced.' }
+
+          New-Item -ItemType Directory -Force release | Out-Null
+          Copy-Item $exe 'release\StarCap.exe' -Force
+          Copy-Item 'Doc\version.json' 'release\version.json' -Force
+
           @'
           from pathlib import Path
           import sys
           data = Path(sys.argv[1]).read_bytes()
           version = sys.argv[2]
           required = [
-              'StarCap.exe', f'StarCap/{version}', 'StarCap_Diagnostics.log',
+              'StarCap.exe', f'StarCap/{version}',
               'https://github.com/axing1218-source/StarCap/releases/latest/download/version.json',
               'https://github.com/axing1218-source/StarCap/releases/latest/download/StarCap.exe',
               'StarCap.update.exe'
           ]
           forbidden = [
-              'WeShot_Diagnostics.log', 'WeShot Gemini API Key', 'WeShot 剪贴板',
-              'WeShotClipboard', 'Screen Capture', 'StarCap/0.8',
               'https://github.com/xland/ScreenCapture/releases',
               'screen-capture-1300696206.cos.ap-chengdu.myqcloud.com',
               'ScreenCapture.update.exe'
@@ -132,17 +143,33 @@ jobs:
           missing = [s for s in required if s.encode('utf-8') not in data and s.encode('utf-16le') not in data]
           hits = [s for s in forbidden if s.encode('utf-8') in data or s.encode('utf-16le') in data]
           if missing:
-              raise SystemExit('Required StarCap runtime strings missing: ' + ', '.join(missing))
+              raise SystemExit('Release binary is missing required StarCap update-channel strings: ' + ', '.join(missing))
           if hits:
-              raise SystemExit('Legacy runtime strings remain: ' + ', '.join(hits))
-          print('Direct source build verification passed.')
-          '@ | Set-Content verify_direct_build.py -Encoding utf8
-          python verify_direct_build.py $exe.FullName '${{ steps.version.outputs.version }}'
+              raise SystemExit('Release binary still contains upstream update-channel strings: ' + ', '.join(hits))
+          print('Release binary verification passed.')
+          '@ | Set-Content verify_release.py -Encoding utf8
+          python verify_release.py 'release\StarCap.exe' $version
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-      - name: Upload direct-build executable
-        uses: actions/upload-artifact@v4
-        with:
-          name: StarCap-v${{ steps.version.outputs.version }}-direct-source-build
-          path: x64/Release/StarCap.exe
-          if-no-files-found: error
+          $hash = (Get-FileHash 'release\StarCap.exe' -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  StarCap.exe" | Set-Content 'release\SHA256SUMS.txt' -Encoding ascii
+          Write-Host "StarCap.exe SHA256: $hash"
+
+      - name: Publish GitHub Release
+        if: steps.existing.outputs.exists != 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = '${{ steps.version.outputs.tag }}'
+          $version = '${{ steps.version.outputs.version }}'
+          gh release create $tag `
+            'release\StarCap.exe' `
+            'release\version.json' `
+            'release\SHA256SUMS.txt' `
+            --repo $env:GITHUB_REPOSITORY `
+            --target $env:GITHUB_SHA `
+            --title "StarCap v$version" `
+            --generate-notes
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
