@@ -10,9 +10,19 @@
         RECT badge = v099HeaderBadgeRect();
         fillRoundRect(dc, badge, RGB(232, 232, 232), 18);
         RECT logo{ badge.left + 8, badge.top + 4, badge.left + 40, badge.top + 36 };
+        // The source logo has transparent rounded corners. Its compact RGB copy cannot
+        // carry alpha, so clip the bitmap to the original rounded silhouette here.
+        const int savedLogoDc = SaveDC(dc);
+        HRGN logoClip = CreateRoundRectRgn(logo.left, logo.top, logo.right + 1, logo.bottom + 1, 10, 10);
+        if (logoClip) SelectClipRgn(dc, logoClip);
         v099DrawAppLogo(dc, logo);
+        if (savedLogoDc) RestoreDC(dc, savedLogoDc);
+        if (logoClip) DeleteObject(logoClip);
+
         RECT title{ badge.left + 47, badge.top + 1, badge.right - 31, badge.top + 21 };
-        drawText(dc, L"剪贴板", title, v099Text(), v099TitleFont ? v099TitleFont : boldFont,
+        // Keep the title lighter and a little more relaxed than the previous semibold
+        // 13pt rendering, which made the three Chinese characters look cramped.
+        drawText(dc, L"剪贴板", title, v099Text(), uiFont,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         RECT count{ badge.left + 47, badge.top + 20, badge.right - 31, badge.bottom - 2 };
         drawText(dc, std::format(L"{} 条记录", items.size()), count, v099Muted(), smallFont,
