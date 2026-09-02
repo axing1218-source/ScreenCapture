@@ -34,7 +34,9 @@ private:
 	Ling::Button* aiModelBtn{ nullptr };
 	Ling::Label* aiStatus{ nullptr };
 	std::vector<std::wstring> aiModels;
-	size_t aiModelPage{ 0 };
+	std::vector<std::wstring> selectValues;
+	std::function<void(const std::wstring&)> selectOnChoose;
+	float selectItemHeight{ 30.f };
 	Ling::ScrollerBox* selectBox{ nullptr };
 	winrt::event_token onMouseDownToken;
 };

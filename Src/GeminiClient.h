@@ -146,7 +146,8 @@ namespace GeminiClient
         std::wstring error;
     };
 
-    inline HttpResult postGenerate(const std::wstring& apiKey, const std::wstring& model, const std::wstring& json)
+    inline HttpResult postGenerate(const std::wstring& apiKey, const std::wstring& model, const std::wstring& json,
+        DWORD receiveTimeoutMs = 45000)
     {
         HttpResult result;
         if (apiKey.empty()) { result.error = L"Gemini API Key 为空。"; return result; }
@@ -154,8 +155,10 @@ namespace GeminiClient
         HINTERNET session = WinHttpOpen(L"StarCap/0.9.8", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY,
             WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
         if (!session) { result.error = L"无法初始化网络连接。"; return result; }
-        // 截图工具不应让一次请求挂一分钟。连接失败尽快反馈；正常 Flash 请求通常远低于此上限。
-        WinHttpSetTimeouts(session, 8000, 8000, 15000, 25000);
+        // Normal OCR/translation gets a 45s receive window. The explicit connection
+        // test can request a longer window because thinking-enabled Gemini models may
+        // need substantially longer than Flash-Lite before returning the first token.
+        WinHttpSetTimeouts(session, 8000, 8000, 15000, receiveTimeoutMs);
         HINTERNET connect = WinHttpConnect(session, L"generativelanguage.googleapis.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
         if (!connect) { WinHttpCloseHandle(session); result.error = L"无法连接 Gemini API。"; return result; }
         std::wstring path = L"/v1beta/models/" + modelId + L":generateContent";
@@ -173,7 +176,14 @@ namespace GeminiClient
             body.empty() ? WINHTTP_NO_REQUEST_DATA : body.data(), (DWORD)body.size(), (DWORD)body.size(), 0);
         if (sent) sent = WinHttpReceiveResponse(request, nullptr);
         if (!sent) {
-            result.error = std::format(L"Gemini 网络请求失败（Windows 错误 {}）。", GetLastError());
+            const DWORD error = GetLastError();
+            if (error == ERROR_WINHTTP_TIMEOUT) {
+                result.error = std::format(L"Gemini 请求超时（等待约 {} 秒）。请稍后重试，或选择响应更快的模型。",
+                    std::max<DWORD>(1, receiveTimeoutMs / 1000));
+            }
+            else {
+                result.error = std::format(L"Gemini 网络请求失败（Windows 错误 {}）。", error);
+            }
         }
         else {
             DWORD statusSize = sizeof(result.status);
@@ -554,7 +564,7 @@ namespace GeminiClient
         // emitting the visible "OK". Keep the test small, but large enough to be valid.
         generation.SetNamedValue(L"maxOutputTokens", JsonValue::CreateNumberValue(256));
         JsonObject root; root.SetNamedValue(L"contents", contents); root.SetNamedValue(L"generationConfig", generation);
-        auto http = postGenerate(apiKey, modelId, root.Stringify().c_str());
+        auto http = postGenerate(apiKey, modelId, root.Stringify().c_str(), 90000);
         if (!http.error.empty()) { out.message = http.error; return out; }
         if (http.status < 200 || http.status >= 300) {
             out.message = std::format(L"连接失败（HTTP {}）：{}", http.status, getApiError(http.body)); return out;

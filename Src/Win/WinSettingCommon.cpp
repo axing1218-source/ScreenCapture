@@ -251,7 +251,6 @@ void WinSettingCommon::initAiCtrls()
                     setting->setAiModel(provider, current);
                     if (aiModelBtn) aiModelBtn->setText(current);
                 }
-                aiModelPage = 0;
                 setAiStatus(std::format(L"{}：已刷新并保存 {} 个兼容模型", AIClient::providerName(provider), aiModels.size()));
             });
         }).detach();
@@ -284,7 +283,6 @@ void WinSettingCommon::refreshAiControls()
         model = aiModels.front();
         setting->setAiModel(provider, model);
     }
-    aiModelPage = 0;
     if (aiProviderBtn) aiProviderBtn->setText(name + L"  ▼");
     if (aiKeyLabel) aiKeyLabel->setText(name + L" API Key");
     if (aiApiKeyBox) {
@@ -313,7 +311,6 @@ void WinSettingCommon::showAiProviderBox()
     for (const auto& provider : AIClient::providers()) items.emplace_back(provider.name, provider.id);
     showChoiceBox(aiProviderBtn, items, [this](const std::wstring& provider) {
         Setting::get()->setAiProvider(provider);
-        aiModelPage = 0;
         refreshAiControls();
     });
 }
@@ -325,28 +322,10 @@ void WinSettingCommon::showAiModelBox()
         aiModels = Setting::get()->getAiModels(Setting::get()->getAiProvider());
         if (aiModels.empty()) aiModels = AIClient::builtInModels(Setting::get()->getAiProvider());
     }
-    constexpr size_t pageSize = 8;
-    const size_t pageCount = std::max<size_t>(1, (aiModels.size() + pageSize - 1) / pageSize);
-    aiModelPage = std::min(aiModelPage, pageCount - 1);
-    const size_t begin = aiModelPage * pageSize;
-    const size_t end = std::min(aiModels.size(), begin + pageSize);
-
     std::vector<std::pair<std::wstring, std::wstring>> items;
-    if (aiModelPage > 0) items.emplace_back(L"← 上一页", L"__prev_page__");
-    for (size_t i = begin; i < end; ++i) items.emplace_back(aiModels[i], aiModels[i]);
-    if (aiModelPage + 1 < pageCount) items.emplace_back(L"下一页 →", L"__next_page__");
-
+    items.reserve(aiModels.size());
+    for (const auto& model : aiModels) items.emplace_back(model, model);
     showChoiceBox(aiModelBtn, items, [this](const std::wstring& model) {
-        if (model == L"__prev_page__") {
-            if (aiModelPage > 0) --aiModelPage;
-            showAiModelBox();
-            return;
-        }
-        if (model == L"__next_page__") {
-            ++aiModelPage;
-            showAiModelBox();
-            return;
-        }
         auto setting = Setting::get();
         auto provider = setting->getAiProvider();
         setting->setAiModel(provider, model);
@@ -404,8 +383,10 @@ void WinSettingCommon::setAutoStartBtn(Ling::Button* btn)
 
 void WinSettingCommon::hideSelectBox()
 {
-    if (!selectBox) return;
     win->onMouseDown.remove(onMouseDownToken);
+    selectValues.clear();
+    selectOnChoose = {};
+    if (!selectBox) return;
     win->body->removeChild(selectBox);
     selectBox = nullptr;
 }
@@ -416,15 +397,14 @@ void WinSettingCommon::showChoiceBox(Ling::Button* btn,
 {
     if (!btn || items.empty()) return;
     hideSelectBox();
-    auto weakThis = getWeakThis();
-    onMouseDownToken = win->onMouseDown.add([this, weakThis](POINT pos, bool) {
-        if (!weakThis.lock() || !selectBox) return;
-        if (selectBox->isPosIn(pos)) return;
-        hideSelectBox();
-    });
 
-    const float itemH = 30.f;
-    const float totalH = std::min(320.f, itemH * (float)items.size());
+    selectItemHeight = 30.f;
+    selectValues.clear();
+    selectValues.reserve(items.size());
+    for (const auto& pair : items) selectValues.push_back(pair.second);
+    selectOnChoose = std::move(onChoose);
+
+    const float totalH = std::min(320.f, selectItemHeight * (float)items.size());
     selectBox = win->body->makeChild<Ling::ScrollerBox>();
     selectBox->setSize(btn->w / win->dpi, totalH);
     selectBox->setPositionType(Ling::Position::Absolute);
@@ -433,23 +413,46 @@ void WinSettingCommon::showChoiceBox(Ling::Button* btn,
     selectBox->setBg(0xFFFFFFFF);
     selectBox->setBorder(1.f, 0x597ef766);
 
+    // Use passive labels for rows. ScrollerBox moves only the content visual when it
+    // scrolls, while Ling Button hit-testing uses the original unscrolled x/y values.
+    // A single parent-level mouse handler below converts window Y to content Y using
+    // getScrollY(), so every row remains clickable after wheel/scrollbar movement.
     for (const auto& pair : items) {
-        auto itemBtn = selectBox->makeChild<Ling::Button>();
-        itemBtn->setText(pair.first);
-        itemBtn->setHeight(itemH);
-        itemBtn->setWidthPercent(100.f);
-        itemBtn->setFontSize(11.f);
-        itemBtn->setHoverBg(0Xf2f2f2FF);
-        itemBtn->setHoverColor(0X000000FF);
-        auto value = pair.second;
-        itemBtn->onClick.add([this, weakThis, value = std::move(value), onChoose](Ling::Button*) mutable {
-            Ling::App::get()->dq.TryEnqueue([this, weakThis, value = std::move(value), onChoose]() mutable {
-                if (!weakThis.lock()) return;
-                hideSelectBox();
-                onChoose(value);
-            });
-        });
+        auto itemLabel = selectBox->makeChild<Ling::Label>();
+        itemLabel->setText(pair.first);
+        itemLabel->setHeight(selectItemHeight);
+        itemLabel->setWidthPercent(100.f);
+        itemLabel->setFontSize(11.f);
+        itemLabel->setAlignItems(Ling::Align::Center);
+        itemLabel->setJustifyContent(Ling::Justify::Center);
     }
+
+    auto weakThis = getWeakThis();
+    onMouseDownToken = win->onMouseDown.add([this, weakThis](POINT pos, bool isRight) {
+        if (!weakThis.lock() || !selectBox || isRight) return;
+        if (!selectBox->isPosIn(pos)) {
+            hideSelectBox();
+            return;
+        }
+        // Leave the right-side scrollbar strip to ScrollerBox itself so the thumb can
+        // be dragged normally.
+        if (!selectBox->isPosInContent(pos)) return;
+
+        const float itemPx = selectItemHeight * win->dpi;
+        if (itemPx <= 0.f) return;
+        const float contentY = (float)pos.y - selectBox->y + selectBox->getScrollY();
+        if (contentY < 0.f) return;
+        const size_t index = (size_t)std::floor(contentY / itemPx);
+        if (index >= selectValues.size()) return;
+
+        auto value = selectValues[index];
+        auto choose = selectOnChoose;
+        Ling::App::get()->dq.TryEnqueue([this, weakThis, value = std::move(value), choose = std::move(choose)]() mutable {
+            if (!weakThis.lock()) return;
+            hideSelectBox();
+            if (choose) choose(value);
+        });
+    });
 }
 
 void WinSettingCommon::showSelectBox(Ling::Button* btn)
