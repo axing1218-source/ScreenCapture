@@ -56,7 +56,7 @@ StarCap.exe --enter=tray
 
 StarCap is a Windows C++20 project built with Visual Studio / MSBuild.
 
-The active project entry points are now fully named for StarCap:
+The active project entry points are fully named for StarCap:
 
 - Solution: `StarCap.slnx`
 - Visual Studio project: `Src/StarCap.vcxproj`
@@ -68,7 +68,7 @@ Example:
 msbuild Src\StarCap.vcxproj /m /p:Configuration=Release /p:Platform=x64
 ```
 
-The project currently depends on third-party components such as Ling. GitHub Actions builds StarCap directly from repository source and also checks active source files for migrated WeShot / ScreenCapture project identifiers so legacy internal naming does not re-enter the current codebase.
+The project still depends on third-party components such as Ling. CI pins Ling to a validated commit, builds StarCap directly from repository source, and checks active source files for migrated WeShot / ScreenCapture project identifiers so legacy internal naming does not re-enter the current codebase.
 
 A small number of historical data, configuration, or migration identifiers may remain for compatibility with upgrades from older versions. Those compatibility identifiers are not used as StarCap's current product or project naming.
 
@@ -80,6 +80,7 @@ See:
 
 - [`LICENSE`](../LICENSE)
 - [`THIRD_PARTY_NOTICES.md`](../THIRD_PARTY_NOTICES.md)
+- [`licenses/`](../licenses/)
 - [`AUTHORS.md`](../AUTHORS.md)
 
 Preserved attribution does not imply endorsement of StarCap's later modifications, releases, or branding by upstream authors.
@@ -104,13 +105,15 @@ Generation scripts live under `tools/`, avoiding dependence on manually exported
 `v0.9.7` is the first development version establishing StarCap as a distinct project identity. Completed independence work includes:
 
 - Unified StarCap branding, version metadata, and runtime naming
-- Migrated OCR, translation, diagnostics, and text-layout internals to `StarCap*` naming
+- Migrated OCR, translation, diagnostics, text-layout, and clipboard implementation filenames to current naming
 - Migrated the Visual Studio project to `StarCap.slnx` / `StarCap.vcxproj`
 - Rebuilt and validated the Windows application and tray icons
-- Added CI checks for source identity and final executable branding
-- Separated current authorship from upstream and third-party attribution
+- Added CI checks for source identity, pinned dependencies, and final executable branding
+- Organized upstream attribution, current authorship, and the third-party license inventory
+- Archived WeShot-era development plans and obsolete build markers under `docs/history/`
+- Marked obsolete WeShot development pull requests as historical and closed them
 
-Next priorities are completing the third-party licensing inventory, archiving historical development documents, and finishing repository-level GitHub independence.
+Source- and build-level v0.9.7 independence is now largely complete. Remaining work is primarily repository-level GitHub administration, such as final repository naming and fork-relationship handling, followed by continued StarCap feature development.
 
 ## Contributing
 

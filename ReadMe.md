@@ -68,7 +68,7 @@ StarCap 当前为 Windows C++20 项目，使用 Visual Studio / MSBuild 构建�
 msbuild Src\StarCap.vcxproj /m /p:Configuration=Release /p:Platform=x64
 ```
 
-项目目前仍依赖 Ling 等第三方组件。GitHub Actions 会从仓库源码直接构建 StarCap，并额外检查活跃源码中是否重新出现已迁移的 WeShot / ScreenCapture 工程标识。
+项目目前仍依赖 Ling 等第三方组件。CI 将 Ling 固定到经过验证的提交，并从仓库源码直接构建 StarCap；同时检查活跃源码中是否重新出现已经迁移的 WeShot / ScreenCapture 工程标识。
 
 为了旧版本升级兼容，个别历史数据、配置或迁移标识可能仍会保留；这些兼容标识不再作为 StarCap 的当前产品或工程命名使用。
 
@@ -80,6 +80,7 @@ StarCap 是独立维护的开源项目，同时包含或改造自其他开源项
 
 - [`LICENSE`](./LICENSE)
 - [`THIRD_PARTY_NOTICES.md`](./THIRD_PARTY_NOTICES.md)
+- [`licenses/`](./licenses/)
 - [`AUTHORS.md`](./AUTHORS.md)
 
 保留这些声明不代表原上游作者对 StarCap 的后续修改、发布或品牌提供背书。
@@ -104,13 +105,15 @@ Windows 主图标与托盘图标分别位于：
 `v0.9.7` 是 StarCap 品牌与开源项目身份正式建立的第一个开发版本。目前已经完成的独立化工作包括：
 
 - StarCap 品牌、版本信息与运行时名称统一
-- OCR、翻译、诊断和文本布局等内部模块迁移到 `StarCap*` 命名
+- OCR、翻译、诊断、文本布局和剪贴板实现文件迁移到当前命名
 - Visual Studio 工程迁移到 `StarCap.slnx` / `StarCap.vcxproj`
 - Windows 主图标和托盘图标重新生成并验证
-- CI 增加源码身份与最终 EXE 品牌检查
-- 上游归属、作者和第三方声明分离整理
+- CI 增加源码身份、固定依赖和最终 EXE 品牌检查
+- 上游归属、作者和第三方许可清单整理
+- WeShot 阶段开发文档与旧构建标记归档到 `docs/history/`
+- 旧 WeShot 开发 PR 标记为历史并关闭
 
-接下来的重点是继续完善第三方许可清单、历史开发文档归档，以及 GitHub 仓库层面的最终独立化。
+源码与构建层面的 v0.9.7 独立化已经基本完成。剩余工作主要是 GitHub 仓库层面的行政操作，例如仓库名称以及 fork 关系的最终处理，然后进入后续 StarCap 功能开发。
 
 ## 贡献
 
