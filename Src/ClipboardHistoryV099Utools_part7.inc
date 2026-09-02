@@ -22,6 +22,31 @@
             return 0;
         }
 
+        // The native ListBox wheel handler depends on a native WS_VSCROLL bar. The
+        // v0.9.9 UI intentionally removed that bar and paints its own floating thumb,
+        // so handle wheel input explicitly and move the ListBox top index ourselves.
+        if (msg == WM_MOUSEWHEEL) {
+            static int wheelRemainder = 0;
+            wheelRemainder += GET_WHEEL_DELTA_WPARAM(wParam);
+            const int notches = wheelRemainder / WHEEL_DELTA;
+            wheelRemainder %= WHEEL_DELTA;
+            if (notches != 0 && !visibleItems.empty()) {
+                UINT wheelLines = 3;
+                SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &wheelLines, 0);
+                int rowsPerNotch = 3;
+                if (wheelLines == WHEEL_PAGESCROLL) rowsPerNotch = 5;
+                else rowsPerNotch = std::clamp((int)wheelLines, 1, 8);
+
+                const int topIndex = std::max(0, (int)SendMessageW(hwnd, LB_GETTOPINDEX, 0, 0));
+                const int maxIndex = std::max(0, (int)visibleItems.size() - 1);
+                const int target = std::clamp(topIndex - notches * rowsPerNotch, 0, maxIndex);
+                SendMessageW(hwnd, LB_SETTOPINDEX, target, 0);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+            ReleaseCapture();
+            return 0;
+        }
+
         LRESULT result = ClipboardHistoryLegacy::listProc(hwnd, msg, wParam, lParam);
 
         if (msg == WM_PAINT) {
