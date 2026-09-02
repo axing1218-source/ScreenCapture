@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <include/Ling.h>
 #include <functional>
 #include <string>
@@ -18,6 +18,7 @@ private:
 	void initLangCtrls();
 	void setAutoStartBtn(Ling::Button* btn);
 	void refreshAiControls();
+	void setAiStatus(const std::wstring& text);
 	void showAiProviderBox();
 	void showAiModelBox();
 	void showSelectBox(Ling::Button* btn);
@@ -33,6 +34,7 @@ private:
 	Ling::Button* aiModelBtn{ nullptr };
 	Ling::Label* aiStatus{ nullptr };
 	std::vector<std::wstring> aiModels;
+	size_t aiModelPage{ 0 };
 	Ling::ScrollerBox* selectBox{ nullptr };
 	winrt::event_token onMouseDownToken;
 };

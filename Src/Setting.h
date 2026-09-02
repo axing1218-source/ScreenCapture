@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <include/Ling.h>
 #include <filesystem>
 #include <winrt/Windows.Data.Json.h>
@@ -30,6 +30,8 @@ public:
 	void setAiApiKey(const std::wstring& provider, const std::wstring& apiKey);
 	std::wstring getAiModel(const std::wstring& provider);
 	void setAiModel(const std::wstring& provider, const std::wstring& model);
+	std::vector<std::wstring> getAiModels(const std::wstring& provider);
+	void setAiModels(const std::wstring& provider, const std::vector<std::wstring>& models);
 
 	// v0.9.7 compatibility wrappers. Existing Gemini configuration remains readable
 	// while the rest of the source migrates to the provider-neutral API above.

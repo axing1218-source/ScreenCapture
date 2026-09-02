@@ -550,7 +550,9 @@ namespace GeminiClient
         JsonObject content; content.SetNamedValue(L"parts", parts);
         JsonArray contents; contents.Append(content);
         JsonObject generation; addFastThinking(generation, modelId);
-        generation.SetNamedValue(L"maxOutputTokens", JsonValue::CreateNumberValue(16));
+        // Thinking-enabled Gemini 3.x models can consume more than 16 tokens before
+        // emitting the visible "OK". Keep the test small, but large enough to be valid.
+        generation.SetNamedValue(L"maxOutputTokens", JsonValue::CreateNumberValue(256));
         JsonObject root; root.SetNamedValue(L"contents", contents); root.SetNamedValue(L"generationConfig", generation);
         auto http = postGenerate(apiKey, modelId, root.Stringify().c_str());
         if (!http.error.empty()) { out.message = http.error; return out; }

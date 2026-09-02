@@ -145,13 +145,19 @@ void WinSettingCommon::initAiCtrls()
         auto model = aiModelBtn->getText();
         setting->setAiApiKey(provider, apiKey);
         setting->setAiModel(provider, model);
-        if (aiStatus) aiStatus->setText(L"正在连接 " + AIClient::providerName(provider) + L"...");
+        setAiStatus(L"正在连接 " + AIClient::providerName(provider) + L"...");
         auto weakThis = getWeakThis();
         std::thread([this, weakThis, provider = std::move(provider), apiKey = std::move(apiKey), model = std::move(model)]() mutable {
             auto result = AIClient::testConnection(provider, apiKey, model);
             Ling::App::get()->dq.TryEnqueue([this, weakThis, provider = std::move(provider), result = std::move(result)]() mutable {
                 if (!weakThis.lock() || !aiStatus) return;
-                aiStatus->setText(result.ok ? AIClient::providerName(provider) + L" 连接成功" : result.message);
+                if (result.ok) {
+                    setAiStatus(AIClient::providerName(provider) + L" 连接成功");
+                }
+                else {
+                    setAiStatus(AIClient::providerName(provider) + L" 连接失败；详细原因已弹出");
+                    MessageBoxW(win->hwnd, result.message.c_str(), L"AI 连接失败", MB_OK | MB_ICONWARNING);
+                }
             });
         }).detach();
     });
@@ -188,7 +194,7 @@ void WinSettingCommon::initAiCtrls()
         auto provider = setting->getAiProvider();
         setting->setAiApiKey(provider, aiApiKeyBox->getText());
         setting->setAiModel(provider, aiModelBtn->getText());
-        if (aiStatus) aiStatus->setText(AIClient::providerName(provider) + L" 设置已保存；API Key 已用 Windows DPAPI 加密");
+        setAiStatus(AIClient::providerName(provider) + L" 设置已保存；API Key 已用 Windows DPAPI 加密");
     });
 
     auto modelRow = makeChild<Ling::Node>();
@@ -225,18 +231,28 @@ void WinSettingCommon::initAiCtrls()
         auto provider = setting->getAiProvider();
         auto apiKey = aiApiKeyBox->getText();
         setting->setAiApiKey(provider, apiKey);
-        if (aiStatus) aiStatus->setText(L"正在获取 " + AIClient::providerName(provider) + L" 可用模型...");
+        setAiStatus(L"正在获取 " + AIClient::providerName(provider) + L" 可用模型...");
         auto weakThis = getWeakThis();
         std::thread([this, weakThis, provider = std::move(provider), apiKey = std::move(apiKey)]() mutable {
             auto result = AIClient::listModels(provider, apiKey);
             Ling::App::get()->dq.TryEnqueue([this, weakThis, provider = std::move(provider), result = std::move(result)]() mutable {
                 if (!weakThis.lock() || !aiStatus) return;
-                if (!result.ok) { aiStatus->setText(result.error); return; }
+                if (!result.ok) {
+                    setAiStatus(AIClient::providerName(provider) + L" 刷新模型失败；详细原因已弹出");
+                    MessageBoxW(win->hwnd, result.error.c_str(), L"刷新 AI 模型失败", MB_OK | MB_ICONWARNING);
+                    return;
+                }
                 aiModels = std::move(result.models);
-                auto current = aiModelBtn ? aiModelBtn->getText() : L"";
-                if (!current.empty() && std::find(aiModels.begin(), aiModels.end(), current) == aiModels.end())
-                    aiModels.insert(aiModels.begin(), current);
-                aiStatus->setText(std::format(L"{}：已刷新 {} 个兼容模型", AIClient::providerName(provider), aiModels.size()));
+                auto setting = Setting::get();
+                setting->setAiModels(provider, aiModels);
+                auto current = setting->getAiModel(provider);
+                if (!aiModels.empty() && std::find(aiModels.begin(), aiModels.end(), current) == aiModels.end()) {
+                    current = aiModels.front();
+                    setting->setAiModel(provider, current);
+                    if (aiModelBtn) aiModelBtn->setText(current);
+                }
+                aiModelPage = 0;
+                setAiStatus(std::format(L"{}：已刷新并保存 {} 个兼容模型", AIClient::providerName(provider), aiModels.size()));
             });
         }).detach();
     });
@@ -262,9 +278,13 @@ void WinSettingCommon::refreshAiControls()
     auto name = AIClient::providerName(provider);
     auto model = setting->getAiModel(provider);
     if (model.empty()) model = AIClient::defaultModel(provider);
-    aiModels = AIClient::builtInModels(provider);
-    if (!model.empty() && std::find(aiModels.begin(), aiModels.end(), model) == aiModels.end())
-        aiModels.insert(aiModels.begin(), model);
+    aiModels = setting->getAiModels(provider);
+    if (aiModels.empty()) aiModels = AIClient::builtInModels(provider);
+    if (!aiModels.empty() && std::find(aiModels.begin(), aiModels.end(), model) == aiModels.end()) {
+        model = aiModels.front();
+        setting->setAiModel(provider, model);
+    }
+    aiModelPage = 0;
     if (aiProviderBtn) aiProviderBtn->setText(name + L"  ▼");
     if (aiKeyLabel) aiKeyLabel->setText(name + L" API Key");
     if (aiApiKeyBox) {
@@ -272,7 +292,18 @@ void WinSettingCommon::refreshAiControls()
         aiApiKeyBox->setText(setting->getAiApiKey(provider));
     }
     if (aiModelBtn) aiModelBtn->setText(model);
-    if (aiStatus) aiStatus->setText(L"当前：" + name + L" / " + model + L"；Key 仅加密保存在本机");
+    setAiStatus(L"当前：" + name + L" / " + model + L"；Key 仅加密保存在本机");
+}
+
+void WinSettingCommon::setAiStatus(const std::wstring& value)
+{
+    if (!aiStatus) return;
+    std::wstring text = value;
+    for (auto& ch : text) if (ch == L'\r' || ch == L'\n' || ch == L'\t') ch = L' ';
+    while (text.find(L"  ") != std::wstring::npos) text.replace(text.find(L"  "), 2, L" ");
+    constexpr size_t maxChars = 52;
+    if (text.size() > maxChars) text = text.substr(0, maxChars - 1) + L"…";
+    aiStatus->setText(text);
 }
 
 void WinSettingCommon::showAiProviderBox()
@@ -282,6 +313,7 @@ void WinSettingCommon::showAiProviderBox()
     for (const auto& provider : AIClient::providers()) items.emplace_back(provider.name, provider.id);
     showChoiceBox(aiProviderBtn, items, [this](const std::wstring& provider) {
         Setting::get()->setAiProvider(provider);
+        aiModelPage = 0;
         refreshAiControls();
     });
 }
@@ -289,15 +321,37 @@ void WinSettingCommon::showAiProviderBox()
 void WinSettingCommon::showAiModelBox()
 {
     if (!aiModelBtn) return;
-    if (aiModels.empty()) aiModels = AIClient::builtInModels(Setting::get()->getAiProvider());
+    if (aiModels.empty()) {
+        aiModels = Setting::get()->getAiModels(Setting::get()->getAiProvider());
+        if (aiModels.empty()) aiModels = AIClient::builtInModels(Setting::get()->getAiProvider());
+    }
+    constexpr size_t pageSize = 8;
+    const size_t pageCount = std::max<size_t>(1, (aiModels.size() + pageSize - 1) / pageSize);
+    aiModelPage = std::min(aiModelPage, pageCount - 1);
+    const size_t begin = aiModelPage * pageSize;
+    const size_t end = std::min(aiModels.size(), begin + pageSize);
+
     std::vector<std::pair<std::wstring, std::wstring>> items;
-    for (const auto& model : aiModels) items.emplace_back(model, model);
+    if (aiModelPage > 0) items.emplace_back(L"← 上一页", L"__prev_page__");
+    for (size_t i = begin; i < end; ++i) items.emplace_back(aiModels[i], aiModels[i]);
+    if (aiModelPage + 1 < pageCount) items.emplace_back(L"下一页 →", L"__next_page__");
+
     showChoiceBox(aiModelBtn, items, [this](const std::wstring& model) {
+        if (model == L"__prev_page__") {
+            if (aiModelPage > 0) --aiModelPage;
+            showAiModelBox();
+            return;
+        }
+        if (model == L"__next_page__") {
+            ++aiModelPage;
+            showAiModelBox();
+            return;
+        }
         auto setting = Setting::get();
         auto provider = setting->getAiProvider();
         setting->setAiModel(provider, model);
         if (aiModelBtn) aiModelBtn->setText(model);
-        if (aiStatus) aiStatus->setText(L"已选择 " + AIClient::providerName(provider) + L" / " + model);
+        setAiStatus(L"已选择 " + AIClient::providerName(provider) + L" / " + model);
     });
 }
 

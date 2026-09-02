@@ -89,7 +89,7 @@ namespace AIClient
             // DeepSeek models are intentionally not offered in this v0.9.8 UI yet.
             return { L"deepseek-v4-flash-vision-exp" };
         }
-        return { L"gemini-3.7-flash", L"gemini-3.6-flash", L"gemini-3.5-flash", L"gemini-3.5-flash-lite" };
+        return { L"gemini-3.5-flash-lite", L"gemini-3.5-flash", L"gemini-3.6-flash", L"gemini-3.7-flash" };
     }
 
     inline std::wstring defaultModel(const std::wstring& provider)
@@ -104,10 +104,20 @@ namespace AIClient
         if (id == ProviderOpenAI) return model.rfind(L"gpt-5.6", 0) == 0;
         if (id == ProviderAnthropic) return model.rfind(L"claude-", 0) == 0;
         if (id == ProviderDeepSeek) return model == L"deepseek-v4-flash-vision-exp";
-        return model.rfind(L"gemini-", 0) == 0 &&
-            model.find(L"embedding") == std::wstring::npos &&
-            model.find(L"image") == std::wstring::npos &&
-            model.find(L"tts") == std::wstring::npos;
+        // StarCap needs a general multimodal generation model, not every model that
+        // happens to expose generateContent. Restrict Gemini to current 3.x Flash/Pro
+        // families and exclude image-generation/specialized variants.
+        if (model.rfind(L"gemini-3", 0) != 0) return false;
+        if (model.find(L"embedding") != std::wstring::npos ||
+            model.find(L"image") != std::wstring::npos ||
+            model.find(L"tts") != std::wstring::npos ||
+            model.find(L"transcribe") != std::wstring::npos ||
+            model.find(L"robotics") != std::wstring::npos ||
+            model.find(L"computer-use") != std::wstring::npos ||
+            model.find(L"omni") != std::wstring::npos ||
+            model.find(L"live") != std::wstring::npos ||
+            model.find(L"audio") != std::wstring::npos) return false;
+        return model.find(L"flash") != std::wstring::npos || model.find(L"pro") != std::wstring::npos;
     }
 
     inline HttpResult httpRequest(const wchar_t* host, const std::wstring& path,

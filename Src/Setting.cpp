@@ -46,7 +46,7 @@ namespace {
         if (id == L"openai") return L"gpt-5.6-luna";
         if (id == L"anthropic") return L"claude-sonnet-5";
         if (id == L"deepseek") return L"deepseek-v4-flash-vision-exp";
-        return L"gemini-3.7-flash";
+        return L"gemini-3.5-flash-lite";
     }
 
     // 配置文件的默认内容。旧版 config.json 没有 clipboard / ai 键时，各 getter
@@ -377,13 +377,18 @@ std::wstring Setting::getAiModel(const std::wstring& provider)
     const auto id = normalizeAiProviderId(provider);
     auto obj = getAiProviderObj(id);
     auto model = std::wstring{ obj.GetNamedString(L"model", L"") };
-    if (!model.empty()) return model;
+    if (!model.empty()) {
+        // Gemini 2.x access is now restricted for many new API users. Do not keep
+        // an inherited v0.9.7 2.x selection as the active v0.9.8 default.
+        if (id == L"gemini" && model.rfind(L"gemini-2.", 0) == 0) return defaultAiModel(id);
+        return model;
+    }
 
     if (id == L"gemini") {
         auto legacy = configObj.GetNamedObject(L"gemini", nullptr);
         if (legacy) {
             model = std::wstring{ legacy.GetNamedString(L"model", L"") };
-            if (!model.empty()) return model;
+            if (!model.empty() && model.rfind(L"gemini-2.", 0) != 0) return model;
         }
     }
     return defaultAiModel(id);
@@ -404,6 +409,31 @@ void Setting::setAiModel(const std::wstring& provider, const std::wstring& model
         }
         legacy.SetNamedValue(L"model", JsonValue::CreateStringValue(value));
     }
+    save();
+}
+
+std::vector<std::wstring> Setting::getAiModels(const std::wstring& provider)
+{
+    std::vector<std::wstring> result;
+    auto obj = getAiProviderObj(normalizeAiProviderId(provider));
+    auto arr = obj.GetNamedArray(L"models", nullptr);
+    if (!arr) return result;
+    for (uint32_t i = 0; i < arr.Size(); ++i) {
+        auto value = std::wstring{ arr.GetStringAt(i) };
+        if (!value.empty() && std::find(result.begin(), result.end(), value) == result.end())
+            result.push_back(std::move(value));
+    }
+    return result;
+}
+
+void Setting::setAiModels(const std::wstring& provider, const std::vector<std::wstring>& models)
+{
+    JsonArray arr;
+    for (const auto& model : models) {
+        if (!model.empty()) arr.Append(JsonValue::CreateStringValue(model));
+    }
+    auto obj = getAiProviderObj(normalizeAiProviderId(provider));
+    obj.SetNamedValue(L"models", arr);
     save();
 }
 
