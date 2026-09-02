@@ -34,6 +34,9 @@ BEGIN
             VALUE "OriginalFilename", "StarCap.exe"
             VALUE "ProductName", "StarCap"
             VALUE "ProductVersion", STARCAP_FILE_VERSION_STR
+            // CI and diagnostics use this stable marker to confirm that the binary
+            // was produced from the same product-version source as Version.h.
+            VALUE "Comments", STARCAP_RUNTIME_VERSION_STR
         END
     END
     BLOCK "VarFileInfo"
