@@ -2,6 +2,14 @@
 
 当前 `docs/` 目录用于保存 StarCap 的开发说明与历史设计记录。
 
+## 仓库身份
+
+- Repository: `axing1218-source/StarCap`
+- Default branch: `main`
+- Product: `StarCap`
+
+仓库已完成从旧名称到 `StarCap` 的重命名；新的源码、文档和 CI 应使用 StarCap 仓库身份。
+
 ## 当前分支
 
 - `main`：StarCap 当前默认开发线。
