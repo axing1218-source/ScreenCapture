@@ -2,6 +2,8 @@
 #include <include/Ling.h>
 #include <dpapi.h>
 #include <wincrypt.h>
+#include <algorithm>
+#include <cwctype>
 #include "Setting.h"
 #include "Util.h"
 #include "Lang.h"
@@ -30,8 +32,25 @@ namespace {
         return L"";
     }
 
-    // 配置文件的默认内容。旧版 config.json 没有 clipboard 键时，getShortcutKey
-    // 仍会回落到 Ctrl+Alt+V，因此升级不会要求用户删配置重来。
+    std::wstring normalizeAiProviderId(std::wstring provider)
+    {
+        std::transform(provider.begin(), provider.end(), provider.begin(),
+            [](wchar_t ch) { return (wchar_t)std::towlower(ch); });
+        if (provider == L"openai" || provider == L"anthropic" || provider == L"deepseek") return provider;
+        return L"gemini";
+    }
+
+    std::wstring defaultAiModel(const std::wstring& provider)
+    {
+        const auto id = normalizeAiProviderId(provider);
+        if (id == L"openai") return L"gpt-5.6-luna";
+        if (id == L"anthropic") return L"claude-sonnet-5";
+        if (id == L"deepseek") return L"deepseek-v4-flash-vision-exp";
+        return L"gemini-3.7-flash";
+    }
+
+    // 配置文件的默认内容。旧版 config.json 没有 clipboard / ai 键时，各 getter
+    // 会使用兼容默认值，因此升级不要求用户删除配置重来。
     constexpr std::wstring_view defaultConfig{ LR"""({"common":{"autoStart":false,"language":"zh-CN"},"shortcutKey":{"cap":"Ctrl+Alt+A","clipboard":"Ctrl+Alt+V"}})""" };
 
     std::wstring protectText(const std::wstring& value)
@@ -41,7 +60,7 @@ namespace {
         in.pbData = reinterpret_cast<BYTE*>(const_cast<wchar_t*>(value.data()));
         in.cbData = static_cast<DWORD>(value.size() * sizeof(wchar_t));
         DATA_BLOB out{};
-        if (!CryptProtectData(&in, L"StarCap Gemini API Key", nullptr, nullptr, nullptr,
+        if (!CryptProtectData(&in, L"StarCap AI API Key", nullptr, nullptr, nullptr,
             CRYPTPROTECT_UI_FORBIDDEN, &out)) {
             return L"";
         }
@@ -104,7 +123,7 @@ Setting::Setting() :dataPath{ initDataPath() }, configPath{ initConfigPath() }
         }
         MessageBox(nullptr, L"config.json parse error，use default config", L"StarCap", MB_OK | MB_ICONWARNING);
     }
-    configObj = JsonObject::Parse(defaultConfig); 
+    configObj = JsonObject::Parse(defaultConfig);
 }
 
 Setting::~Setting()
@@ -143,10 +162,7 @@ const JsonObject Setting::getConfigObj()
 void Setting::setShortcutKey(const std::wstring& type, const std::vector<std::wstring>& keys)
 {
     std::wstring str;
-    for (size_t i = 0; i < keys.size(); i++)
-    {
-        str += L"+" + keys[i];
-    }
+    for (size_t i = 0; i < keys.size(); i++) str += L"+" + keys[i];
     if (!str.empty()) str.erase(0, 1);
 
     auto shortcutKey = configObj.GetNamedObject(L"shortcutKey", nullptr);
@@ -187,7 +203,6 @@ void Setting::setAutoStart(bool autoStart)
             RegSetValueEx(hKey, L"StarCap", 0, REG_SZ,
                 reinterpret_cast<const BYTE*>(commandLine.c_str()),
                 static_cast<DWORD>((commandLine.size() + 1) * sizeof(wchar_t)));
-            // Remove the inherited startup entry after the StarCap entry exists.
             RegDeleteValue(hKey, legacyValueName.c_str());
         }
         else {
@@ -205,6 +220,7 @@ void Setting::setAutoStart(bool autoStart)
     common.SetNamedValue(L"autoStart", JsonValue::CreateBooleanValue(autoStart));
     save();
 }
+
 bool Setting::getAutoStart()
 {
     auto common = configObj.GetNamedObject(L"common", nullptr);
@@ -242,16 +258,14 @@ std::filesystem::path Setting::initDataPath()
     }
     return dataPath;
 }
+
 std::filesystem::path Setting::initConfigPath()
 {
-    // 与插件的查找顺序一致（见 Util.cpp 里的 findImageReader）：先看 exe 同目录。
-    // 只有那份文件本来就存在时才认它 —— 不存在就不要在程序目录里新建，
-    // 装在 Program Files 下时那儿通常没有写权限，况且默认位置该是 appdata
     wchar_t buffer[MAX_PATH]{};
     GetModuleFileName(nullptr, buffer, MAX_PATH);
     auto path = std::filesystem::path{ buffer }.parent_path().append(L"config.json");
     if (std::filesystem::exists(path)) return path;
-    auto fallback = this->dataPath; //复制一份路径对象，append 会就地改
+    auto fallback = this->dataPath;
     return fallback.append(L"config.json");
 }
 
@@ -277,53 +291,144 @@ void Setting::setLang(const std::wstring& langCode)
     }
     common.SetNamedValue(L"language", JsonValue::CreateStringValue(langCode));
     setting->save();
-	Lang::get()->initLang(langCode);
+    Lang::get()->initLang(langCode);
+}
+
+JsonObject Setting::getAiProviderObj(const std::wstring& provider)
+{
+    auto ai = configObj.GetNamedObject(L"ai", nullptr);
+    if (!ai) {
+        ai = JsonObject();
+        configObj.SetNamedValue(L"ai", ai);
+    }
+    auto providers = ai.GetNamedObject(L"providers", nullptr);
+    if (!providers) {
+        providers = JsonObject();
+        ai.SetNamedValue(L"providers", providers);
+    }
+    const auto id = normalizeAiProviderId(provider);
+    auto obj = providers.GetNamedObject(id, nullptr);
+    if (!obj) {
+        obj = JsonObject();
+        providers.SetNamedValue(id, obj);
+    }
+    return obj;
+}
+
+std::wstring Setting::getAiProvider()
+{
+    auto ai = configObj.GetNamedObject(L"ai", nullptr);
+    if (!ai) return L"gemini";
+    return normalizeAiProviderId(std::wstring{ ai.GetNamedString(L"provider", L"gemini") });
+}
+
+void Setting::setAiProvider(const std::wstring& provider)
+{
+    auto ai = configObj.GetNamedObject(L"ai", nullptr);
+    if (!ai) {
+        ai = JsonObject();
+        configObj.SetNamedValue(L"ai", ai);
+    }
+    ai.SetNamedValue(L"provider", JsonValue::CreateStringValue(normalizeAiProviderId(provider)));
+    save();
+}
+
+std::wstring Setting::getAiApiKey(const std::wstring& provider)
+{
+    const auto id = normalizeAiProviderId(provider);
+    auto obj = getAiProviderObj(id);
+    auto protectedValue = std::wstring{ obj.GetNamedString(L"apiKeyProtected", L"") };
+    if (!protectedValue.empty()) return unprotectText(protectedValue);
+
+    // v0.9.7 stored Gemini directly under the legacy "gemini" object. Read it
+    // transparently so existing users do not need to enter their key again.
+    if (id == L"gemini") {
+        auto legacy = configObj.GetNamedObject(L"gemini", nullptr);
+        if (legacy) {
+            auto legacyValue = std::wstring{ legacy.GetNamedString(L"apiKeyProtected", L"") };
+            if (!legacyValue.empty()) return unprotectText(legacyValue);
+        }
+    }
+    return L"";
+}
+
+void Setting::setAiApiKey(const std::wstring& provider, const std::wstring& apiKey)
+{
+    const auto id = normalizeAiProviderId(provider);
+    auto protectedValue = protectText(apiKey);
+    auto obj = getAiProviderObj(id);
+    obj.SetNamedValue(L"apiKeyProtected", JsonValue::CreateStringValue(protectedValue));
+
+    // Mirror Gemini into the v0.9.7 location so a user can temporarily downgrade
+    // without losing access to the previously configured Gemini key.
+    if (id == L"gemini") {
+        auto legacy = configObj.GetNamedObject(L"gemini", nullptr);
+        if (!legacy) {
+            legacy = JsonObject();
+            configObj.SetNamedValue(L"gemini", legacy);
+        }
+        legacy.SetNamedValue(L"apiKeyProtected", JsonValue::CreateStringValue(protectedValue));
+    }
+    save();
+}
+
+std::wstring Setting::getAiModel(const std::wstring& provider)
+{
+    const auto id = normalizeAiProviderId(provider);
+    auto obj = getAiProviderObj(id);
+    auto model = std::wstring{ obj.GetNamedString(L"model", L"") };
+    if (!model.empty()) return model;
+
+    if (id == L"gemini") {
+        auto legacy = configObj.GetNamedObject(L"gemini", nullptr);
+        if (legacy) {
+            model = std::wstring{ legacy.GetNamedString(L"model", L"") };
+            if (!model.empty()) return model;
+        }
+    }
+    return defaultAiModel(id);
+}
+
+void Setting::setAiModel(const std::wstring& provider, const std::wstring& model)
+{
+    const auto id = normalizeAiProviderId(provider);
+    const auto value = model.empty() ? defaultAiModel(id) : model;
+    auto obj = getAiProviderObj(id);
+    obj.SetNamedValue(L"model", JsonValue::CreateStringValue(value));
+
+    if (id == L"gemini") {
+        auto legacy = configObj.GetNamedObject(L"gemini", nullptr);
+        if (!legacy) {
+            legacy = JsonObject();
+            configObj.SetNamedValue(L"gemini", legacy);
+        }
+        legacy.SetNamedValue(L"model", JsonValue::CreateStringValue(value));
+    }
+    save();
 }
 
 std::wstring Setting::getGeminiApiKey()
 {
-    auto gemini = configObj.GetNamedObject(L"gemini", nullptr);
-    if (!gemini) return L"";
-    auto protectedValue = std::wstring{ gemini.GetNamedString(L"apiKeyProtected", L"") };
-    return unprotectText(protectedValue);
+    return getAiApiKey(L"gemini");
 }
 
 void Setting::setGeminiApiKey(const std::wstring& apiKey)
 {
-    auto gemini = configObj.GetNamedObject(L"gemini", nullptr);
-    if (!gemini) {
-        gemini = JsonObject();
-        configObj.SetNamedValue(L"gemini", gemini);
-    }
-    auto protectedValue = protectText(apiKey);
-    gemini.SetNamedValue(L"apiKeyProtected", JsonValue::CreateStringValue(protectedValue));
-    save();
+    setAiApiKey(L"gemini", apiKey);
 }
 
 std::wstring Setting::getGeminiModel()
 {
-    auto gemini = configObj.GetNamedObject(L"gemini", nullptr);
-    if (!gemini) return L"gemini-3.7-flash";
-    auto model = std::wstring{ gemini.GetNamedString(L"model", L"gemini-3.7-flash") };
-    if (model.empty()) model = L"gemini-3.7-flash";
-    return model;
+    return getAiModel(L"gemini");
 }
 
 void Setting::setGeminiModel(const std::wstring& model)
 {
-    auto gemini = configObj.GetNamedObject(L"gemini", nullptr);
-    if (!gemini) {
-        gemini = JsonObject();
-        configObj.SetNamedValue(L"gemini", gemini);
-    }
-    gemini.SetNamedValue(L"model", JsonValue::CreateStringValue(model.empty() ? L"gemini-3.7-flash" : model));
-    save();
+    setAiModel(L"gemini", model);
 }
 
 JsonObject Setting::getToolObj(const std::wstring& tool)
 {
-    // 用带默认值的重载：这两层在旧配置文件里都不存在，直接 GetNamedObject 会抛异常，
-    // 值被手工改成非对象时它也一样返回默认值，不会炸
     auto root = configObj.GetNamedObject(L"toolPin", nullptr);
     if (!root) {
         root = JsonObject();
@@ -370,7 +475,6 @@ void Setting::setUpdateCheckDay(long long day)
 {
     auto common = configObj.GetNamedObject(L"common", nullptr);
     if (!common) return;
-    // 这项不写进 defaultConfig：它是程序自己的记账，不是给用户改的配置
     common.SetNamedValue(L"updateCheckDay", JsonValue::CreateNumberValue(static_cast<double>(day)));
     save();
 }
@@ -386,18 +490,8 @@ void Setting::initShortcutKeys()
     if (!clipboardStr.empty()) lingApp->regHotKey(clipboardStr, clipboardShortcutMsgId);
 
     lingApp->onHotKey.add([this](UINT msg) {
-        if (msg == capShortcutMsgId) {
-            WinCap::init();
-        }
-        else if (msg == clipboardShortcutMsgId) {
-            ClipboardHistory::toggle();
-        }
+        if (msg == capShortcutMsgId) WinCap::init();
+        else if (msg == clipboardShortcutMsgId) ClipboardHistory::toggle();
     });
-    lingApp->onSecondInstance.add([this]() {
-        WinCap::init();
-    });
+    lingApp->onSecondInstance.add([this]() { WinCap::init(); });
 }
-
-
-
-
