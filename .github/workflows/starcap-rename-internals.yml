@@ -1,0 +1,79 @@
+name: StarCap Rename Internal Modules
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - starcap-source-cleanup
+
+permissions:
+  contents: write
+
+jobs:
+  rename:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout StarCap
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Rename diagnostic and layout internals
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $replacements = [ordered]@{
+            'WeShotDiag' = 'StarCapDiag'
+            'WeShotTextGeometry' = 'StarCapTextGeometry'
+            'WeShotParagraphLayout' = 'StarCapParagraphLayout'
+          }
+
+          $sourceFiles = Get-ChildItem Src -Recurse -File | Where-Object {
+            $_.Extension -in @('.h', '.hpp', '.cpp', '.c', '.vcxproj', '.filters', '.user')
+          }
+
+          foreach ($file in $sourceFiles) {
+            $text = Get-Content $file.FullName -Raw
+            $updated = $text
+            foreach ($entry in $replacements.GetEnumerator()) {
+              $updated = $updated.Replace($entry.Key, $entry.Value)
+            }
+            if ($updated -ne $text) {
+              Set-Content $file.FullName $updated -Encoding utf8
+            }
+          }
+
+          $renames = [ordered]@{
+            'Src\WeShotDiag.h' = 'Src\StarCapDiag.h'
+            'Src\WeShotTextGeometry.h' = 'Src\StarCapTextGeometry.h'
+            'Src\WeShotParagraphLayout.h' = 'Src\StarCapParagraphLayout.h'
+          }
+
+          foreach ($entry in $renames.GetEnumerator()) {
+            if (Test-Path $entry.Key) {
+              if (Test-Path $entry.Value) { throw "Target already exists: $($entry.Value)" }
+              Move-Item $entry.Key $entry.Value
+            }
+          }
+
+          $remaining = git grep -n -E 'WeShotDiag|WeShotTextGeometry|WeShotParagraphLayout' -- Src 2>$null
+          if ($LASTEXITCODE -eq 0 -and $remaining) {
+            Write-Host $remaining
+            throw 'Legacy first-batch internal names remain under Src.'
+          }
+
+          foreach ($required in @('Src\StarCapDiag.h','Src\StarCapTextGeometry.h','Src\StarCapParagraphLayout.h')) {
+            if (-not (Test-Path $required)) { throw "Required renamed source file is missing: $required" }
+          }
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A Src
+          git diff --cached --check
+          if (git diff --cached --quiet) {
+            Write-Host 'First-batch internal names are already migrated.'
+            exit 0
+          }
+          git commit -m 'Rename StarCap diagnostic and layout internals'
+          git push origin HEAD:starcap-source-cleanup
