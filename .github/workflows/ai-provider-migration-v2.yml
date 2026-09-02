@@ -1,0 +1,42 @@
+name: StarCap AI Provider Migration V2
+
+on:
+  push:
+    branches:
+      - starcap-v0.9.8-ai-providers
+
+permissions:
+  contents: write
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: starcap-v0.9.8-ai-providers
+
+      - name: Apply exact AI call-site migration
+        run: python tools/migrate_ai_provider_calls.py
+
+      - name: Verify migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          grep -q '#include "AIClient.h"' Src/StarCapOcrV2.h
+          grep -q '#include "AIClient.h"' Src/StarCapCaptureTranslate.h
+          if grep -q 'getGeminiApiKey' Src/StarCapOcrV2.h; then exit 1; fi
+          if grep -q 'getGeminiApiKey' Src/StarCapCaptureTranslate.h; then exit 1; fi
+          git diff --stat
+
+      - name: Commit migrated source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'axing1218-source'
+          git config user.email 'axing1218@gmail.com'
+          git add Src/AIClient.h Src/StarCapOcrV2.h Src/StarCapCaptureTranslate.h
+          git commit -m 'Route OCR and translation through AI providers'
+          git push origin HEAD:starcap-v0.9.8-ai-providers
