@@ -21,11 +21,23 @@ public:
 	std::wstring getLang();
 	void setLang(const std::wstring& lang);
 	void initShortcutKeys();
-	// Gemini API Key 使用 Windows DPAPI 加密后再写入 config.json，配置文件里不会出现明文 Key。
+
+	// AI provider settings. Every provider owns an independent API key and model.
+	// API keys are encrypted with Windows DPAPI before being written to config.json.
+	std::wstring getAiProvider();
+	void setAiProvider(const std::wstring& provider);
+	std::wstring getAiApiKey(const std::wstring& provider);
+	void setAiApiKey(const std::wstring& provider, const std::wstring& apiKey);
+	std::wstring getAiModel(const std::wstring& provider);
+	void setAiModel(const std::wstring& provider, const std::wstring& model);
+
+	// v0.9.7 compatibility wrappers. Existing Gemini configuration remains readable
+	// while the rest of the source migrates to the provider-neutral API above.
 	std::wstring getGeminiApiKey();
 	void setGeminiApiKey(const std::wstring& apiKey);
 	std::wstring getGeminiModel();
 	void setGeminiModel(const std::wstring& model);
+
 	// 贴图窗口子工具栏（ToolSub）的状态。每个工具在 config.json 的 toolPin 下各占一组，
 	// 组名就是 ToolMain 上的按钮 id（rect / ellipse / ... / eraser），键名由调用方给
 	// （fill、width、colorIndex 之类，各工具语义不同）。
@@ -41,12 +53,13 @@ public:
 	void setUpdateCheckDay(long long day);
 private:
 	Setting();
+	JsonObject getAiProviderObj(const std::wstring& provider);
 	// toolPin.<tool> 那个 JsonObject。缺哪一层就现建一层挂上去 ——
 	// SetNamedValue 得有个落脚的对象，而这两层在旧配置文件里都不存在
 	JsonObject getToolObj(const std::wstring& tool);
 	std::filesystem::path initDataPath();
 	// 决定配置文件用哪一份：exe 同目录有 config.json 就用它（绿色版，配置跟着程序走），
-	// 否则用 %appdata%\ScreenCapture\config.json。二者只认一个，读哪儿就写哪儿。
+	// 否则用 %appdata%\StarCap\config.json。二者只认一个，读哪儿就写哪儿。
 	std::filesystem::path initConfigPath();
 	void save();
 private:
