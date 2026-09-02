@@ -9,6 +9,12 @@ on:
 permissions:
   contents: write
 
+# Only one release publisher may run at a time. A later run waits for the
+# current publisher, then re-checks whether that version already exists.
+concurrency:
+  group: starcap-release
+  cancel-in-progress: false
+
 jobs:
   release:
     runs-on: windows-latest
@@ -164,6 +170,16 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $tag = '${{ steps.version.outputs.tag }}'
           $version = '${{ steps.version.outputs.version }}'
+
+          # A previous serialized run may have published this version while this
+          # run was waiting/building. Treat that as success, not a failed release.
+          gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host "$tag was already published by another run; nothing to do."
+            exit 0
+          }
+          $global:LASTEXITCODE = 0
+
           gh release create $tag `
             'release\StarCap.exe' `
             'release\version.json' `
