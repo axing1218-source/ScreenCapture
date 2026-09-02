@@ -71,10 +71,12 @@ jobs:
           $buildNow = Get-Content $buildWorkflow -Raw
           if (-not $buildNow.Contains('Src\StarCap.vcxproj')) { throw 'Direct build workflow was not migrated to StarCap.vcxproj.' }
 
-          $remaining = git grep -n -E 'ScreenCapture\.vcxproj|ScreenCapture\.slnx' -- . ':!docs' 2>$null
+          # Scan the resulting product source/solution/permanent build workflow only.
+          # The one-time migration workflow intentionally contains the old filenames as input strings.
+          $remaining = git grep -n -E 'ScreenCapture\.vcxproj|ScreenCapture\.slnx' -- Src StarCap.slnx .github/workflows/starcap-direct-build.yml 2>$null
           if ($LASTEXITCODE -eq 0 -and $remaining) {
             Write-Host $remaining
-            throw 'Legacy Visual Studio project filenames remain outside historical docs.'
+            throw 'Legacy Visual Studio project filenames remain in active project files.'
           }
 
           git config user.name 'github-actions[bot]'
