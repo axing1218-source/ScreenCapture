@@ -85,7 +85,14 @@ jobs:
 
       - name: Apply StarCap runtime branding and migrations
         shell: pwsh
-        run: pwsh -NoProfile -ExecutionPolicy Bypass -File tools\patch_starcap_runtime_branding.ps1
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File tools\patch_starcap_runtime_branding.ps1
+          $gemini = Get-Content Src\GeminiClient.h -Raw
+          $gemini = $gemini.Replace('L"StarCap/0.8"', 'L"StarCap/0.9.7"')
+          Set-Content Src\GeminiClient.h $gemini -Encoding utf8
+          if ((Get-Content Src\GeminiClient.h -Raw).Contains('L"StarCap/0.8"')) {
+            throw 'Legacy StarCap network version remains.'
+          }
 
       - name: Build StarCap
         shell: pwsh
@@ -114,6 +121,7 @@ jobs:
               'WeShot 内容预览',
               'WeShotClipboard',
               'Screen Capture',
+              'StarCap/0.8',
               'https://github.com/xland/'
           ]
           hits = []
@@ -122,6 +130,8 @@ jobs:
                   hits.append(text)
           if hits:
               raise SystemExit('Legacy runtime strings remain: ' + ', '.join(hits))
+          if b'StarCap.exe' not in data and 'StarCap.exe'.encode('utf-16le') not in data:
+              raise SystemExit('StarCap executable identity was not found in the built binary.')
           print('StarCap runtime string scan passed.')
           '@ | Set-Content verify_starcap_binary.py -Encoding utf8
           python verify_starcap_binary.py $exe.FullName
