@@ -14,6 +14,27 @@ jobs:
       - name: Checkout StarCap
         uses: actions/checkout@v4
 
+      - name: Verify StarCap source identity
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $legacyIdentifiers = git grep -n -E 'WeShot(Diag|TextGeometry|ParagraphLayout|Ocr|OcrV2|CaptureTranslate)|WESHOT_(FILE_VERSION|FILE_VERSION_STR|DISPLAY_VERSION)' -- Src 2>$null
+          if ($LASTEXITCODE -eq 0 -and $legacyIdentifiers) {
+            Write-Host $legacyIdentifiers
+            throw 'Legacy WeShot internal identifiers remain in active source.'
+          }
+
+          $legacyProjectNames = git grep -n -E 'ScreenCapture\.vcxproj|ScreenCapture\.slnx' -- Src StarCap.slnx .github/workflows/starcap-direct-build.yml 2>$null
+          if ($LASTEXITCODE -eq 0 -and $legacyProjectNames) {
+            Write-Host $legacyProjectNames
+            throw 'Legacy ScreenCapture project filenames remain in active project files.'
+          }
+
+          if (-not (Test-Path 'Src\StarCap.vcxproj')) { throw 'Src\StarCap.vcxproj is missing.' }
+          if (-not (Test-Path 'StarCap.slnx')) { throw 'StarCap.slnx is missing.' }
+          Write-Host 'StarCap source identity verification passed.'
+
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
