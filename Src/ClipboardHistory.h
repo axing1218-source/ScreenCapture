@@ -86,7 +86,7 @@ namespace ClipboardHistoryWindowShim
 // Route window creation inside the v0.9.9 presentation layer through the shim.
 // Child LISTBOX/EDIT/BUTTON controls are passed through unchanged.
 #define CreateWindowExW ClipboardHistoryWindowShim::createWindowExW
-#include "ClipboardHistoryV099.h"
+#include "ClipboardHistoryV099Utools.h"
 #undef CreateWindowExW
 
 namespace ClipboardHistoryWindowShim
