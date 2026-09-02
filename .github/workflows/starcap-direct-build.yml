@@ -4,6 +4,8 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - main
+      - starcap-v0.9.7
       - starcap-source-cleanup
 
 jobs:
