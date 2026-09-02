@@ -1,0 +1,118 @@
+name: StarCap Materialize Source
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - starcap-source-cleanup
+
+jobs:
+  materialize:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout StarCap
+        uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Prepare Ling dependency
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force D:\project | Out-Null
+          if (Test-Path D:\project\Ling) { Remove-Item -Recurse -Force D:\project\Ling }
+          git clone --depth 1 https://github.com/xland/Ling.git D:\project\Ling
+
+          $util = Get-Content D:\project\Ling\include\Util.h -Raw
+          $util = $util.Replace('constexpr auto gen = [](size_t i, size_t idx) {', 'constexpr auto gen = [](std::wstring_view chars, size_t i, size_t idx) {')
+          $util = $util.Replace('std::wstring{gen(I, I)...}', 'std::wstring{gen(chars, I, I)...}')
+          Set-Content D:\project\Ling\include\Util.h $util -Encoding utf8
+
+          $lingAppPath = 'D:\project\Ling\src\App.cpp'
+          $lingApp = Get-Content $lingAppPath -Raw
+          $oldTrayLine = 'tray->hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(1));'
+          if (-not $lingApp.Contains($oldTrayLine)) { throw 'Ling tray icon load line changed.' }
+          $newTrayCode = 'tray->hIcon = (HICON)LoadImageW(GetModuleHandle(nullptr), MAKEINTRESOURCE(2), IMAGE_ICON,' + "`r`n" +
+            '            GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);' + "`r`n" +
+            '        if (!tray->hIcon) {' + "`r`n" +
+            '            tray->hIcon = LoadIcon(GetModuleHandle(nullptr), MAKEINTRESOURCE(1));' + "`r`n" +
+            '        }'
+          $lingApp = $lingApp.Replace($oldTrayLine, $newTrayCode)
+          Set-Content $lingAppPath $lingApp -Encoding utf8
+
+      - name: Build Yoga and Ling
+        shell: pwsh
+        run: |
+          msbuild D:\project\Ling\yoga\yoga.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=D:\project\Ling\
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          msbuild D:\project\Ling\Ling.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=D:\project\Ling\
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Generate StarCap icons
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File tools\generate_starcap_icon.ps1 -OutputPath Src\Res\logo.ico
+          pwsh -NoProfile -ExecutionPolicy Bypass -File tools\generate_starcap_tray_icon.ps1 -OutputPath Src\Res\tray.ico
+
+      - name: Prepare portable GIF build
+        shell: pwsh
+        run: |
+          $gif = Get-Content Src\Win\VideoGif.hpp -Raw
+          $gif = $gif.Replace('#include "gifski.h"', '')
+          $gif = [regex]::Replace($gif, '(?s)\s*//这段代码是好的.*?inline void createGif2\(GifParam\* param\) \{', "`r`n    inline void createGif2(GifParam* param) {")
+          Set-Content Src\Win\VideoGif.hpp $gif -Encoding utf8
+
+          $video = Get-Content Src\Win\CapVideo.cpp -Raw
+          $video = $video.Replace('VideoGif::createGif(gifParam.get());', 'VideoGif::createGif2(gifParam.get());')
+          Set-Content Src\Win\CapVideo.cpp $video -Encoding utf8
+
+          $proj = Get-Content Src\ScreenCapture.vcxproj -Raw
+          $proj = $proj.Replace('D:\sdk\gifski;', '')
+          $proj = $proj.Replace(';D:\sdk\gifski\target\release\gifski.lib', '')
+          Set-Content Src\ScreenCapture.vcxproj $proj -Encoding utf8
+
+      - name: Apply inherited feature patch chain
+        shell: pwsh
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File tools\patch_translation_ui.ps1
+
+      - name: Apply StarCap runtime migration pass
+        shell: pwsh
+        run: |
+          pwsh -NoProfile -ExecutionPolicy Bypass -File tools\patch_starcap_runtime_branding.ps1
+          $gemini = Get-Content Src\GeminiClient.h -Raw
+          $gemini = $gemini.Replace('L"StarCap/0.8"', 'L"StarCap/0.9.7"')
+          Set-Content Src\GeminiClient.h $gemini -Encoding utf8
+          if ((Get-Content Src\GeminiClient.h -Raw).Contains('L"StarCap/0.8"')) { throw 'Legacy StarCap network version remains.' }
+
+      - name: Build materialized StarCap source
+        shell: pwsh
+        run: |
+          msbuild Src\ScreenCapture.vcxproj /m /p:Configuration=Release /p:Platform=x64 /p:SolutionDir=${{ github.workspace }}\
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Capture materialized source snapshot
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force materialized | Out-Null
+          Copy-Item Src materialized\Src -Recurse
+          Copy-Item Lang materialized\Lang -Recurse
+          Copy-Item ScreenCapture.slnx materialized\ScreenCapture.slnx
+          Copy-Item LICENSE materialized\LICENSE
+          Copy-Item THIRD_PARTY_NOTICES.md materialized\THIRD_PARTY_NOTICES.md
+          git status --short | Set-Content materialized\MATERIALIZATION_STATUS.txt -Encoding utf8
+          git diff -- Src | Set-Content materialized\MATERIALIZATION.patch -Encoding utf8
+
+      - name: Upload materialized source
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarCap-v0.9.7-materialized-source
+          path: materialized
+          if-no-files-found: error
+
+      - name: Upload verified executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: StarCap-v0.9.7-materialized-exe
+          path: x64/Release/StarCap.exe
+          if-no-files-found: error
