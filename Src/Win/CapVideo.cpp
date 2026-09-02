@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include <include/Ling.h>
 #include "CapVideo.h"
 #include "WinCap.h"
@@ -201,7 +201,7 @@ void CapVideo::startGif()
     gifParam->h = (int)(cutMask->maskRect.bottom - cutMask->maskRect.top);
     gifParam->path = videoTempPath.append(L"temp.gif").wstring();
     captureThread = std::jthread([this](std::stop_token st) {
-        VideoGif::createGif(gifParam.get());
+        VideoGif::createGif2(gifParam.get());
     });
 }
 
@@ -239,3 +239,4 @@ std::wstring CapVideo::stop()
     gifParam.reset();
     return filePath;
 }
+

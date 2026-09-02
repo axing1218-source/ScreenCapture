@@ -15,6 +15,8 @@
 #include "Util.h"
 #include "Setting.h"
 #include "GeminiClient.h"
+#include "WeShotTextGeometry.h"
+#include "WeShotParagraphLayout.h"
 
 namespace WeShotOcrV2
 {
@@ -130,17 +132,39 @@ namespace WeShotOcrV2
     class OcrResultWindow : public Ling::WinBase
     {
     public:
-        OcrResultWindow(std::vector<BYTE> data, int imgW, int imgH)
-            : pixels(std::move(data)), imageW(imgW), imageH(imgH)
+        OcrResultWindow(std::vector<BYTE> data, int imgW, int imgH, bool fromLongScreenshot = false)
+            : pixels(std::move(data)), imageW(imgW), imageH(imgH), isLongScreenshotSource(fromLongScreenshot)
         {
-            setTitle(L"WeShot - 文字识别 / 翻译");
+            setTitle(L"StarCap - 文字识别 / 翻译");
             setSize(1120.f, 700.f);
             setMinSize(800.f, 460.f);
             setCenter();
             onMouseDown.add([this](POINT pos, bool isRight) {
-                if (isRight && imageCanvas && imageCanvas->isPosIn(pos)) showImageContextMenu();
+                if (!imageCanvas || !imageCanvas->isPosIn(pos)) return;
+                if (isRight) { showImageContextMenu(); return; }
+                imageDragging = true;
+                dragStart = pos;
+                dragStartOffsetX = imageOffsetX;
+                dragStartOffsetY = imageOffsetY;
+                SetCapture(hwnd);
             });
-            onSizeChanged.add([this]() { refresh(); });
+            onMouseMove.add([this](POINT pos) {
+                if (!imageDragging) return;
+                imageOffsetX = dragStartOffsetX + (pos.x - dragStart.x);
+                imageOffsetY = dragStartOffsetY + (pos.y - dragStart.y);
+                clampImageOffset();
+                refresh();
+            });
+            onMouseUp.add([this](POINT, bool isRight) {
+                if (isRight || !imageDragging) return;
+                imageDragging = false;
+                if (GetCapture() == hwnd) ReleaseCapture();
+            });
+            onMouseWheel.add([this](POINT pos, float delta) {
+                if (!imageCanvas || !imageCanvas->isPosIn(pos) || delta == 0.f) return;
+                zoomBy(delta > 0.f ? 1.15f : (1.f / 1.15f));
+            });
+            onSizeChanged.add([this]() { clampImageOffset(); updateZoomLabel(); refresh(); });
             onDestroy.add([this]() {
                 ++requestId;
                 if (activeWindow == this) activeWindow = nullptr;
@@ -155,6 +179,16 @@ namespace WeShotOcrV2
         }
 
         void open() { createNativeWindow(0, WS_OVERLAPPEDWINDOW); }
+
+        // Used by direct translation of a stitched long screenshot: open the same viewer but
+        // skip a separate OCR request and immediately translate the image.
+        void beginImageTranslation()
+        {
+            originalText.clear();
+            geminiOcrBlocks.clear();
+            if (textBox) textBox->setText(L"");
+            startGeminiTranslation();
+        }
 
         void setLocalOcrResult(Result result)
         {
@@ -198,11 +232,19 @@ namespace WeShotOcrV2
         {
             translating = false;
             if (!status || !textBox) return;
+            textBox->setBg(0xFAFAFAFF);
             if (!result.ok) {
                 status->setText(result.error.empty() ? L"Gemini 翻译失败。" : result.error);
+                textBox->setText(originalText);
                 if (translateBtn) translateBtn->setText(L"翻译");
+                refresh();
                 return;
             }
+            if (originalText.empty() && !result.sourceText.empty()) {
+                originalText = std::move(result.sourceText);
+            }
+            WeShotTextGeometry::stabilize(result.blocks, pixels, imageW, imageH, L"result");
+            WeShotParagraphLayout::apply(result.blocks, pixels, imageW, imageH, L"result");
             translatedText = std::move(result.translatedText);
             translationBlocks = std::move(result.blocks);
             translationReady = true;
@@ -216,9 +258,53 @@ namespace WeShotOcrV2
         {
             body->setBg(0xF4F4F4FF);
             body->setFlexDirection(Ling::FlexDirection::Row);
-            imageCanvas = body->makeChild<Ling::Canvas>();
+
+            auto left = body->makeChild<Ling::Node>();
+            left->setFlexGrow(1.f);
+            left->setHeightPercent(100.f);
+            left->setBg(0xF2F2F2FF);
+            left->setFlexDirection(Ling::FlexDirection::Column);
+
+            auto zoomRow = left->makeChild<Ling::Node>();
+            zoomRow->setHeight(38.f); zoomRow->setWidthPercent(100.f);
+            zoomRow->setPaddingLeft(10.f); zoomRow->setPaddingRight(10.f);
+            zoomRow->setBg(0xFAFAFAFF);
+            zoomRow->setFlexDirection(Ling::FlexDirection::Row);
+            zoomRow->setAlignItems(Ling::Align::Center);
+
+            zoomFitBtn = zoomRow->makeChild<Ling::Button>();
+            zoomFitBtn->setText(L"适合"); zoomFitBtn->setSize(52.f, 26.f); zoomFitBtn->setFontSize(12.f);
+            zoomFitBtn->setBorderRadius(4.f); zoomFitBtn->setBg(0xE8F3FFFF); zoomFitBtn->setColor(0x1677FFFF);
+            zoomFitBtn->setMarginRight(6.f);
+            zoomFitBtn->onClick.add([this](Ling::Button*) { setFitZoom(); });
+
+            zoomActualBtn = zoomRow->makeChild<Ling::Button>();
+            zoomActualBtn->setText(L"1:1"); zoomActualBtn->setSize(46.f, 26.f); zoomActualBtn->setFontSize(12.f);
+            zoomActualBtn->setBorderRadius(4.f); zoomActualBtn->setBg(0xF3F3F3FF); zoomActualBtn->setColor(0x444444FF);
+            zoomActualBtn->setMarginRight(10.f);
+            zoomActualBtn->onClick.add([this](Ling::Button*) { setActualZoom(); });
+
+            zoomOutBtn = zoomRow->makeChild<Ling::Button>();
+            zoomOutBtn->setText(L"−"); zoomOutBtn->setSize(30.f, 26.f); zoomOutBtn->setFontSize(15.f);
+            zoomOutBtn->setBorderRadius(4.f); zoomOutBtn->setBg(0xF3F3F3FF); zoomOutBtn->setMarginRight(4.f);
+            zoomOutBtn->onClick.add([this](Ling::Button*) { zoomBy(1.f / 1.25f); });
+
+            zoomLabel = zoomRow->makeChild<Ling::Label>();
+            zoomLabel->setText(L"适合"); zoomLabel->setWidth(72.f); zoomLabel->setFontSize(12.f);
+            zoomLabel->setColor(0x666666FF);
+
+            zoomInBtn = zoomRow->makeChild<Ling::Button>();
+            zoomInBtn->setText(L"+"); zoomInBtn->setSize(30.f, 26.f); zoomInBtn->setFontSize(15.f);
+            zoomInBtn->setBorderRadius(4.f); zoomInBtn->setBg(0xF3F3F3FF); zoomInBtn->setMarginLeft(4.f);
+            zoomInBtn->onClick.add([this](Ling::Button*) { zoomBy(1.25f); });
+
+            auto zoomHint = zoomRow->makeChild<Ling::Label>();
+            zoomHint->setText(L"拖动图片可查看超出区域"); zoomHint->setFontSize(11.f); zoomHint->setColor(0x999999FF);
+            zoomHint->setFlexGrow(1.f);
+
+            imageCanvas = left->makeChild<Ling::Canvas>();
             imageCanvas->setFlexGrow(1.f);
-            imageCanvas->setHeightPercent(100.f);
+            imageCanvas->setWidthPercent(100.f);
             imageCanvas->setBg(0xF2F2F2FF);
             auto divider = body->makeChild<Ling::Node>();
             divider->setWidth(1.f); divider->setHeightPercent(100.f); divider->setBg(0xD9D9D9FF);
@@ -294,7 +380,10 @@ namespace WeShotOcrV2
             if (!translationReady) translated = false;
             showTranslatedImage = translated;
             showingTranslationText = translated;
-            if (textBox) textBox->setText(translated ? translatedText : originalText);
+            if (textBox) {
+                textBox->setBg(0xFAFAFAFF);
+                textBox->setText(translated ? translatedText : originalText);
+            }
             if (translateBtn) translateBtn->setText(translated ? L"原文" : L"译文");
             updateTextTabs();
             if (status) status->setText(translated
@@ -316,6 +405,83 @@ namespace WeShotOcrV2
             }
         }
 
+        float getFitScale() const
+        {
+            if (!imageCanvas || imageW <= 0 || imageH <= 0) return 1.f;
+            const float margin = 18.f * dpi;
+            const float availW = std::max(1.f, imageCanvas->w - margin * 2.f);
+            const float availH = std::max(1.f, imageCanvas->h - margin * 2.f);
+            return std::clamp(std::min(availW / imageW, availH / imageH), .02f, 8.f);
+        }
+
+        float getImageScale() const
+        {
+            return imageFitMode ? getFitScale() : std::clamp(imageManualScale, .02f, 8.f);
+        }
+
+        void updateZoomButtons()
+        {
+            if (zoomFitBtn) {
+                zoomFitBtn->setBg(imageFitMode ? 0xE8F3FFFF : 0xF3F3F3FF);
+                zoomFitBtn->setColor(imageFitMode ? 0x1677FFFF : 0x444444FF);
+            }
+            if (zoomActualBtn) {
+                const bool actual = !imageFitMode && fabsf(imageManualScale - 1.f) < .001f;
+                zoomActualBtn->setBg(actual ? 0xE8F3FFFF : 0xF3F3F3FF);
+                zoomActualBtn->setColor(actual ? 0x1677FFFF : 0x444444FF);
+            }
+        }
+
+        void updateZoomLabel()
+        {
+            updateZoomButtons();
+            if (!zoomLabel) return;
+            const int pct = (int)std::round(getImageScale() * 100.f);
+            zoomLabel->setText(imageFitMode ? std::format(L"适合 {}%", pct) : std::format(L"{}%", pct));
+        }
+
+        void clampImageOffset()
+        {
+            if (!imageCanvas || imageW <= 0 || imageH <= 0) return;
+            if (imageFitMode) { imageOffsetX = imageOffsetY = 0.f; return; }
+            const float margin = 18.f * dpi;
+            const float availW = std::max(1.f, imageCanvas->w - margin * 2.f);
+            const float availH = std::max(1.f, imageCanvas->h - margin * 2.f);
+            const float scale = getImageScale();
+            const float dw = imageW * scale, dh = imageH * scale;
+            const float limitX = std::max(0.f, (dw - availW) * .5f);
+            const float limitY = std::max(0.f, (dh - availH) * .5f);
+            imageOffsetX = std::clamp(imageOffsetX, -limitX, limitX);
+            imageOffsetY = std::clamp(imageOffsetY, -limitY, limitY);
+        }
+
+        void setFitZoom()
+        {
+            imageFitMode = true;
+            imageOffsetX = imageOffsetY = 0.f;
+            updateZoomLabel();
+            refresh();
+        }
+
+        void setActualZoom()
+        {
+            imageFitMode = false;
+            imageManualScale = 1.f;
+            imageOffsetX = imageOffsetY = 0.f;
+            clampImageOffset();
+            updateZoomLabel();
+            refresh();
+        }
+
+        void zoomBy(float factor)
+        {
+            const float current = getImageScale();
+            imageFitMode = false;
+            imageManualScale = std::clamp(current * factor, .02f, 8.f);
+            clampImageOffset();
+            updateZoomLabel();
+            refresh();
+        }
         D2D1_COLOR_F sampleBackground(const GeminiClient::TranslationBlock& block) const
         {
             if (pixels.empty() || imageW <= 0 || imageH <= 0) return D2D1::ColorF(D2D1::ColorF::White);
@@ -337,31 +503,182 @@ namespace WeShotOcrV2
         void paintTranslationBlocks(ID2D1DeviceContext* ctx, const D2D1_RECT_F& imageRect)
         {
             if (!ctx || !showTranslatedImage || translationBlocks.empty()) return;
-            const float dw = imageRect.right - imageRect.left, dh = imageRect.bottom - imageRect.top;
-            for (auto& block : translationBlocks) {
-                D2D1_RECT_F rect{
-                    imageRect.left + dw * block.xmin / 1000.f,
-                    imageRect.top + dh * block.ymin / 1000.f,
-                    imageRect.left + dw * block.xmax / 1000.f,
-                    imageRect.top + dh * block.ymax / 1000.f
-                };
-                if (rect.right - rect.left < 2.f || rect.bottom - rect.top < 2.f) continue;
-                auto bgColor = sampleBackground(block);
+            const float dw = imageRect.right - imageRect.left;
+            const float dh = imageRect.bottom - imageRect.top;
+            if (dw <= .5f || dh <= .5f) return;
+
+            auto glyphUnits = [](const std::wstring& text) {
+                float units = 0.f;
+                for (wchar_t ch : text) {
+                    if (ch == L'\r' || ch == L'\n') continue;
+                    if (iswspace(ch)) { units += .32f; continue; }
+                    if (ch >= 0x2E80) { units += 1.f; continue; }
+                    if (iswalnum(ch)) { units += .55f; continue; }
+                    units += .38f;
+                }
+                return std::max(.75f, units);
+            };
+            auto isBody = [](const GeminiClient::TranslationBlock& b) {
+                return b.role.empty() || b.role == L"body";
+            };
+            auto rectFromBlock = [&](const GeminiClient::TranslationBlock& b) {
+                return D2D1::RectF(
+                    imageRect.left + dw * b.xmin / 1000.f,
+                    imageRect.top + dh * b.ymin / 1000.f,
+                    imageRect.left + dw * b.xmax / 1000.f,
+                    imageRect.top + dh * b.ymax / 1000.f);
+            };
+
+            // The body baseline comes from physical source-line occupied height, not from
+            // paragraph area.  A wide two-line paragraph can no longer inflate its font.
+            std::vector<float> physicalBody;
+            for (const auto& b : translationBlocks) {
+                if (isBody(b) && b.sourceLineHeight > 0.f)
+                    physicalBody.push_back(dh * b.sourceLineHeight / 1000.f);
+            }
+            float bodyOccupied = 0.f;
+            if (!physicalBody.empty()) {
+                std::sort(physicalBody.begin(), physicalBody.end());
+                bodyOccupied = physicalBody[physicalBody.size() / 2];
+            }
+
+            auto fallbackFont = [&](const GeminiClient::TranslationBlock& b, float bw, float bh) {
+                const auto& source = b.source.empty() ? b.translation : b.source;
+                const float units = glyphUnits(source);
+                const float area = std::sqrt(std::max(.01f, bw * bh) / (units * 1.18f));
+                const float line = bh / (1.18f * std::max(1, b.sourceLines));
+                return std::max(.01f, area * .55f + line * .45f);
+            };
+
+            struct Item {
+                GeminiClient::TranslationBlock block;
+                D2D1_RECT_F slot{};
+                float target{};
+                float font{};
+                float padX{}, padY{};
+            };
+            std::vector<Item> items;
+            items.reserve(translationBlocks.size());
+
+            for (const auto& b : translationBlocks) {
+                Item it;
+                it.block = b;
+                it.slot = rectFromBlock(b);
+                const float bw = std::max(.5f, it.slot.right - it.slot.left);
+                const float bh = std::max(.5f, it.slot.bottom - it.slot.top);
+
+                if (b.sourceLineHeight > 0.f) {
+                    float occupied = dh * b.sourceLineHeight / 1000.f;
+                    if (isBody(b) && bodyOccupied > 0.f) occupied = bodyOccupied * .82f + occupied * .18f;
+                    // DirectWrite em size is close to, but not identical with, visible glyph
+                    // occupancy. This calibration is relative to measured source ink and is
+                    // shared across all screenshot sizes.
+                    it.target = occupied * .93f;
+                    if (bodyOccupied > 0.f) {
+                        if (b.role == L"title") it.target = std::max(it.target, bodyOccupied * 1.30f);
+                        else if (b.role == L"heading") it.target = std::max(it.target, bodyOccupied * 1.14f);
+                        else if (b.role == L"caption") it.target = std::min(it.target, bodyOccupied * .88f);
+                    }
+                }
+                else {
+                    it.target = fallbackFont(b, bw, bh);
+                }
+                it.target = std::max(.01f, it.target);
+                items.push_back(std::move(it));
+            }
+
+            auto overlapArea = [](const D2D1_RECT_F& a, const D2D1_RECT_F& b) {
+                const float w = std::max(0.f, std::min(a.right, b.right) - std::max(a.left, b.left));
+                const float h = std::max(0.f, std::min(a.bottom, b.bottom) - std::max(a.top, b.top));
+                return w * h;
+            };
+
+            // Local paragraph slots should already be disjoint.  Keep a deterministic
+            // midpoint partition only as a fallback for unmatched Gemini geometry.
+            for (size_t pass = 0; pass < 2; ++pass) {
+                for (size_t i = 0; i < items.size(); ++i) for (size_t j = i + 1; j < items.size(); ++j) {
+                    auto& a = items[i].slot; auto& b = items[j].slot;
+                    if (overlapArea(a, b) <= .25f) continue;
+                    const float acy = (a.top + a.bottom) * .5f, bcy = (b.top + b.bottom) * .5f;
+                    const float acx = (a.left + a.right) * .5f, bcx = (b.left + b.right) * .5f;
+                    const float xov = std::max(0.f, std::min(a.right,b.right)-std::max(a.left,b.left));
+                    const float yov = std::max(0.f, std::min(a.bottom,b.bottom)-std::max(a.top,b.top));
+                    if (xov >= yov) {
+                        const float mid = (acy + bcy) * .5f;
+                        if (acy <= bcy) { a.bottom = std::min(a.bottom, mid); b.top = std::max(b.top, mid); }
+                        else { b.bottom = std::min(b.bottom, mid); a.top = std::max(a.top, mid); }
+                    } else {
+                        const float mid = (acx + bcx) * .5f;
+                        if (acx <= bcx) { a.right = std::min(a.right, mid); b.left = std::max(b.left, mid); }
+                        else { b.right = std::min(b.right, mid); a.left = std::max(a.left, mid); }
+                    }
+                }
+            }
+
+            auto fits = [](const std::wstring& text, float fs, float w, float h) {
+                if (w <= .1f || h <= .1f || fs <= .01f) return false;
+                auto tl = Ling::D2D::makeTextLayout(text, fs, w, 16384.f);
+                if (!tl) return false;
+                DWRITE_TEXT_METRICS m{};
+                return SUCCEEDED(tl->GetMetrics(&m)) && m.height <= h + .35f && m.width <= w + .75f;
+            };
+
+            int collisions = 0, fitFailures = 0;
+            for (size_t i = 0; i < items.size(); ++i)
+                for (size_t j = i + 1; j < items.size(); ++j)
+                    if (overlapArea(items[i].slot, items[j].slot) > .25f) ++collisions;
+
+            for (auto& it : items) {
+                const float sw = std::max(.5f, it.slot.right - it.slot.left);
+                const float sh = std::max(.5f, it.slot.bottom - it.slot.top);
+                it.padX = std::min(sw * .018f, it.target * .10f);
+                it.padY = std::min(sh * .025f, it.target * .06f);
+                const float iw = std::max(.25f, sw - it.padX * 2.f);
+                const float ih = std::max(.25f, sh - it.padY * 2.f);
+
+                // Preserve original visual size. Never enlarge a short Chinese translation
+                // merely because its source paragraph rectangle is wide. Shrink only if the
+                // translated text cannot fit inside the source occupied region.
+                it.font = it.target;
+                if (!fits(it.block.translation, it.font, iw, ih)) {
+                    float lo = std::max(.01f, it.target * .08f), hi = it.target;
+                    while (lo > .011f && !fits(it.block.translation, lo, iw, ih)) lo *= .5f;
+                    for (int k = 0; k < 18; ++k) {
+                        const float mid = (lo + hi) * .5f;
+                        if (fits(it.block.translation, mid, iw, ih)) lo = mid; else hi = mid;
+                    }
+                    it.font = std::max(.01f, lo);
+                }
+                if (!fits(it.block.translation, it.font, iw, ih)) ++fitFailures;
+            }
+
+            WeShotDiag::append(std::format(
+                L"layout-v023 path=result blocks={} physical_body={:.2f} collisions={} fit_failures={}",
+                items.size(), bodyOccupied, collisions, fitFailures));
+
+            for (auto& it : items) {
+                if (it.slot.right <= it.slot.left || it.slot.bottom <= it.slot.top) continue;
+                auto bgColor = sampleBackground(it.block);
                 const float lum = bgColor.r * .299f + bgColor.g * .587f + bgColor.b * .114f;
                 auto textColor = lum > .55f ? D2D1::ColorF(D2D1::ColorF::Black) : D2D1::ColorF(D2D1::ColorF::White);
                 Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bgBrush, textBrush;
                 ctx->CreateSolidColorBrush(bgColor, bgBrush.GetAddressOf());
                 ctx->CreateSolidColorBrush(textColor, textBrush.GetAddressOf());
                 if (!bgBrush || !textBrush) continue;
-                ctx->FillRectangle(rect, bgBrush.Get());
-                float boxH = rect.bottom - rect.top;
-                float fontSize = std::clamp(boxH * .62f, 7.f * dpi, 24.f * dpi);
-                auto tl = Ling::D2D::makeTextLayout(block.translation, fontSize,
-                    std::max(1.f, rect.right - rect.left), std::max(1.f, boxH));
+                ctx->FillRectangle(it.slot, bgBrush.Get());
+
+                const float iw = std::max(.25f, (it.slot.right-it.slot.left) - it.padX*2.f);
+                const float ih = std::max(.25f, (it.slot.bottom-it.slot.top) - it.padY*2.f);
+                auto tl = Ling::D2D::makeTextLayout(it.block.translation, it.font, iw, ih);
                 if (!tl) continue;
-                tl->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-                tl->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-                ctx->DrawTextLayout({ rect.left, rect.top }, tl.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                const bool centered = it.block.role == L"label";
+                tl->SetTextAlignment(centered ? DWRITE_TEXT_ALIGNMENT_CENTER : DWRITE_TEXT_ALIGNMENT_LEADING);
+                tl->SetParagraphAlignment(centered ? DWRITE_PARAGRAPH_ALIGNMENT_CENTER : DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+                if (it.block.role == L"title" || it.block.role == L"heading") {
+                    DWRITE_TEXT_RANGE range{0, (UINT32)it.block.translation.size()};
+                    tl->SetFontWeight(it.block.role == L"title" ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_MEDIUM, range);
+                }
+                ctx->DrawTextLayout({it.slot.left + it.padX, it.slot.top + it.padY}, tl.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
             }
         }
 
@@ -371,15 +688,34 @@ namespace WeShotOcrV2
             auto ctx = imageCanvas->startPaint(); if (!ctx) return;
             ctx->Clear(D2D1::ColorF(0xF2F2F2));
             if (imageBitmap && imageW > 0 && imageH > 0) {
-                float cw = imageCanvas->w, ch = imageCanvas->h, margin = 18.f * dpi;
-                float availW = std::max(1.f, cw - margin * 2.f), availH = std::max(1.f, ch - margin * 2.f);
-                float scale = std::min(availW / imageW, availH / imageH);
-                scale = std::min(1.f, std::max(.01f, scale));
+                float cw = imageCanvas->w, ch = imageCanvas->h;
+                float scale = getImageScale();
                 float dw = imageW * scale, dh = imageH * scale;
-                float left = (cw - dw) * .5f, top = (ch - dh) * .5f;
+                clampImageOffset();
+                float left = (cw - dw) * .5f + imageOffsetX;
+                float top = (ch - dh) * .5f + imageOffsetY;
                 auto dest = D2D1::RectF(left, top, left + dw, top + dh);
                 ctx->DrawBitmap(imageBitmap.Get(), dest, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-                paintTranslationBlocks(ctx, dest);
+                if (translating) {
+                    Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> overlayBrush, loadingTextBrush;
+                    ctx->CreateSolidColorBrush(D2D1::ColorF(.38f, .38f, .38f, .46f), overlayBrush.GetAddressOf());
+                    ctx->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), loadingTextBrush.GetAddressOf());
+                    if (overlayBrush) ctx->FillRectangle(dest, overlayBrush.Get());
+                    if (loadingTextBrush) {
+                        const float loadingFont = std::clamp(16.f * dpi, 12.f * dpi, 22.f * dpi);
+                        auto loadingLayout = Ling::D2D::makeTextLayout(L"正在翻译中...", loadingFont,
+                            std::max(1.f, dw), std::max(1.f, dh));
+                        if (loadingLayout) {
+                            loadingLayout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                            loadingLayout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                            ctx->DrawTextLayout({ dest.left, dest.top }, loadingLayout.Get(), loadingTextBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                        }
+                    }
+                }
+                else {
+                    paintTranslationBlocks(ctx, dest);
+                }
+                updateZoomLabel();
             }
             imageCanvas->finishPaint();
         }
@@ -425,16 +761,30 @@ namespace WeShotOcrV2
             if (apiKey.empty()) { if (status) status->setText(L"请先在“设置 > 通用设置”填写 Gemini API Key"); return; }
             translating = true;
             if (translateBtn) translateBtn->setText(L"翻译中...");
-            if (status) status->setText(geminiOcrBlocks.empty()
-                ? L"正在让 Gemini 识别图片并翻译..."
-                : L"正在翻译已识别文字（无需再次上传图片）...");
+            if (textBox) {
+                textBox->setBg(0xE2E2E2CC);
+                textBox->setText(L"正在翻译中...");
+            }
+            refresh();
+            // Always re-read the complete image for layout-aware translation.
+            // OCR blocks are optimized for text extraction/copying, but can be split by visual
+            // lines. Reusing those blocks for translation causes cramped, fragmented Chinese.
+            // The full-image path returns paragraph/title regions and uses the same renderer as
+            // direct screenshot translation.
+            const bool preferImageTranslation = true;
+            if (status) status->setText(preferImageTranslation
+                ? L"正在按完整图片版式翻译..."
+                : (geminiOcrBlocks.empty()
+                    ? L"正在让 Gemini 识别图片并翻译..."
+                    : L"正在翻译已识别文字（无需再次上传图片）..."));
             const auto myRequest = requestId.load();
             auto blocks = geminiOcrBlocks;
             auto imagePixels = pixels;
             std::thread([blocks = std::move(blocks), imagePixels = std::move(imagePixels),
-                width = imageW, height = imageH, apiKey = std::move(apiKey), model = std::move(model), myRequest]() mutable {
+                width = imageW, height = imageH, apiKey = std::move(apiKey), model = std::move(model),
+                myRequest, preferImageTranslation]() mutable {
                 GeminiClient::TranslationResult r;
-                if (!blocks.empty()) r = GeminiClient::translateOcrBlocks(blocks, apiKey, model);
+                if (!blocks.empty() && !preferImageTranslation) r = GeminiClient::translateOcrBlocks(blocks, apiKey, model);
                 else r = GeminiClient::translateImage(imagePixels, width, height, apiKey, model);
                 Ling::App::get()->dq.TryEnqueue([r = std::move(r), myRequest]() mutable {
                     if (requestId.load() != myRequest || !activeWindow) return;
@@ -488,9 +838,21 @@ namespace WeShotOcrV2
         Ling::Canvas* imageCanvas{ nullptr };
         Ling::TextBox* textBox{ nullptr };
         Ling::Label* status{ nullptr };
+        Ling::Label* zoomLabel{ nullptr };
+        Ling::Button* zoomFitBtn{ nullptr };
+        Ling::Button* zoomActualBtn{ nullptr };
+        Ling::Button* zoomOutBtn{ nullptr };
+        Ling::Button* zoomInBtn{ nullptr };
         Ling::Button* originalTab{ nullptr };
         Ling::Button* translatedTab{ nullptr };
         Ling::Button* translateBtn{ nullptr };
+        bool imageFitMode{ true };
+        bool isLongScreenshotSource{ false };
+        float imageManualScale{ 1.f };
+        float imageOffsetX{ 0.f }, imageOffsetY{ 0.f };
+        bool imageDragging{ false };
+        POINT dragStart{ 0,0 };
+        float dragStartOffsetX{ 0.f }, dragStartOffsetY{ 0.f };
         std::wstring originalText, translatedText;
         std::vector<GeminiClient::OcrBlock> geminiOcrBlocks;
         std::vector<GeminiClient::TranslationBlock> translationBlocks;
@@ -501,13 +863,13 @@ namespace WeShotOcrV2
     inline bool containsPoint(POINT) { return false; }
     inline bool hasWindow() { return activeWindow != nullptr; }
 
-    inline void showPixels(std::vector<BYTE> pixels, int width, int height)
+    inline void showPixels(std::vector<BYTE> pixels, int width, int height, bool fromLongScreenshot = false)
     {
         if (pixels.empty() || width <= 0 || height <= 0) return;
         if (pixels.size() < (size_t)width * (size_t)height * 4) return;
         const auto myRequest = ++requestId;
         if (activeWindow) activeWindow->close();
-        activeWindow = new OcrResultWindow(pixels, width, height);
+        activeWindow = new OcrResultWindow(pixels, width, height, fromLongScreenshot);
         activeWindow->open();
 
         auto setting = Setting::get();
@@ -534,6 +896,16 @@ namespace WeShotOcrV2
         }
     }
 
+    inline void showTranslationPixels(std::vector<BYTE> pixels, int width, int height, bool fromLongScreenshot = false)
+    {
+        if (pixels.empty() || width <= 0 || height <= 0) return;
+        if (pixels.size() < (size_t)width * (size_t)height * 4) return;
+        ++requestId;
+        if (activeWindow) activeWindow->close();
+        activeWindow = new OcrResultWindow(std::move(pixels), width, height, fromLongScreenshot);
+        activeWindow->open();
+        activeWindow->beginImageTranslation();
+    }
     inline void show(WinCap* win)
     {
         if (!win || !win->cutMask || !win->cutMask->hasRect()) return;
@@ -543,3 +915,15 @@ namespace WeShotOcrV2
         win->close();
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+

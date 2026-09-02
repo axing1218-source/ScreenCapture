@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include <filesystem>
 #include "Lang.h"
 #include "Util.h"
@@ -106,7 +106,7 @@ void Lang::initLang(const std::wstring& langCode)
 		}
 		else {
 			auto msg = L"lang pare error：" + pathStr + L"\n use English";
-			MessageBox(nullptr, msg.data(), L"ScreenCapture", MB_OK | MB_ICONWARNING);
+			MessageBox(nullptr, msg.data(), L"StarCap", MB_OK | MB_ICONWARNING);
 		}
 		break;
 	}
@@ -126,3 +126,4 @@ std::vector<std::pair<std::wstring, std::wstring>> Lang::getSupportedLang()
 	}
 	return result;
 }
+

@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "../Lang.h"
 #include "../Setting.h"
 #include "WinSetting.h"
@@ -97,7 +97,7 @@ namespace {
 
 WinSettingShortcut::WinSettingShortcut(Ling::WinBase* parent):Ling::Node(parent)
 {
-    std::vector<std::wstring> keys = { L"cap" };
+    std::vector<std::wstring> keys = { L"cap", L"clipboard" };
     for (auto& key:keys)
     {
         auto box = makeChild<Ling::Node>();
@@ -309,3 +309,4 @@ std::wstring WinSettingShortcut::keyToStr(UINT vkCode)
         return L"";
     }
 }
+

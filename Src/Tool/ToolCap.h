@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <include/Ling.h>
 
 class WinCap;
@@ -18,10 +18,12 @@ private:
 	WinCap* win;
 	bool dpiChanged{ false };
 	std::unique_ptr<Tip> tip;
-	// “translate” 放在 OCR 右侧：第一次点击翻译，之后同一按钮原文/译文反复切换。
-	std::vector<std::wstring> btnIds = { L"mark",L"long",L"video",L"ocr",L"translate",L"qrcode",L"spliter",L"close",L"save",L"clipboard" };
-	std::vector<std::wstring> btnCodes = { L"\ue97f",L"\ue73e",L"\ue660",L"\ue67b",L"译",L"\ue71e",L"",L"\ue62d",L"\ue608",L"\ue6ad" };
-	std::vector<std::wstring> btnTips = { L"cap.mark",L"cap.long",L"cap.video",L"cap.ocr",L"",L"cap.qrcode",L"",L"tool.close",L"tool.save",L"tool.clipboard" };
+	// Primary feature order is fixed and identical wherever this standard capture toolbar is used:
+	// 图像标记 -> 二维码 -> 录像 -> 长截图 -> 文字识别 -> 翻译
+	std::vector<std::wstring> btnIds = { L"mark",L"qrcode",L"video",L"long",L"ocr",L"translate",L"spliter",L"close",L"save",L"clipboard" };
+	std::vector<std::wstring> btnCodes = { L"\ue97f",L"\ue71e",L"\ue660",L"\ue73e",L"\ue67b",L"译",L"",L"\ue62d",L"\ue608",L"\ue6ad" };
+	std::vector<std::wstring> btnTips = { L"cap.mark",L"cap.qrcode",L"cap.video",L"cap.long",L"cap.ocr",L"",L"",L"tool.close",L"tool.save",L"tool.clipboard" };
 	static constexpr float btnSize{ 32.f };
 	static constexpr float spliterW{ 1.f };
 };
+

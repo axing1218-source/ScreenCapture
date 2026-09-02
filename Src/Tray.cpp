@@ -5,9 +5,11 @@
 #include "Win/WinCap.h"
 #include "Win/WinSetting.h"
 #include "Setting.h"
+#include "ClipboardHistory.h"
 
 namespace {
 	static std::unique_ptr<Tray> trayIns;
+	static constexpr UINT clipboardMsg = 162;
 	static constexpr UINT settingMsg = 163;
 	static constexpr UINT exitMsg = 164;
 }
@@ -46,10 +48,16 @@ Tray* Tray::get()
 void Tray::onTrayRightClick()
 {
 	auto menu = CreatePopupMenu();
+	AppendMenu(menu, MF_STRING, clipboardMsg, L"剪贴板历史");
+	AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
 	AppendMenu(menu, MF_STRING, settingMsg, Lang::get(L"tray.setting").data());
 	AppendMenu(menu, MF_STRING, exitMsg, Lang::get(L"tray.exit").data());
 	auto menuId = Ling::App::get()->popupMenu(menu);
-	if (menuId == settingMsg)
+	if (menuId == clipboardMsg)
+	{
+		ClipboardHistory::show();
+	}
+	else if (menuId == settingMsg)
 	{
 		WinSetting::init();
 	}
@@ -58,3 +66,4 @@ void Tray::onTrayRightClick()
 		Ling::App::get()->quit(0);
 	}
 }
+

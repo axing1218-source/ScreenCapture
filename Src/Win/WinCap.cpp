@@ -23,7 +23,7 @@ std::unique_ptr<WinCap> winCap;
 
 WinCap::WinCap() : Ling::WinBase()
 {
-	setTitle(L"Screen Capture");
+	setTitle(L"StarCap");
     auto [x1, y1, w1, h1] = App::get()->getScreenArea();
 	this->x = x1;this->y = y1;this->w = w1;this->h = h1;
     onMouseDown.add([this](POINT pos, bool isRight) { this->onDown(pos, isRight); });
@@ -616,8 +616,27 @@ void WinCap::startVideo()
     if (stage != CapStage::Adjust || !cutMask->hasRect()) return;
     stage = CapStage::Video;
     enterLiveStage();
+
+    // Do not merely draw the selected rectangle transparent. Remove it from the
+    // capture window's actual Win32 region so the application below is genuinely
+    // visible to occlusion/focus heuristics (important for animated stickers).
+    hollowWin();
+
+    // The action was initiated by the user, so Windows normally permits this
+    // foreground hand-off. WindowFromPoint sees through the region hole.
+    auto& r = cutMask->maskRect;
+    POINT center{
+        x + (LONG)((r.left + r.right) * .5f),
+        y + (LONG)((r.top + r.bottom) * .5f)
+    };
+    HWND below = WindowFromPoint(center);
+    if (below && below != hwnd) {
+        below = GetAncestor(below, GA_ROOT);
+        if (below && below != hwnd) SetForegroundWindow(below);
+    }
+
     capVideo = std::make_unique<CapVideo>(this);
-    // ToolCap 原地换成 ToolVideo
+    // ToolCap 原地换成 ToolVideo; WS_EX_NOACTIVATE keeps focus on the recorded app.
     capVideo->makeTool();
 }
 
@@ -806,3 +825,5 @@ bool WinCap::getCutPixels(std::vector<BYTE>& pixels, int& cw, int& ch)
     ch = (int)cutH;
     return true;
 }
+
+

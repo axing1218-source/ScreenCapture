@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <include/Ling.h>
 #include "../WeShotOcr.h"
 
@@ -29,7 +29,15 @@ public:
 		if (imgData.empty() || imgW <= 0 || resultH <= 0) return false;
 		stopCap();
 		auto data = imgData;
-		WeShotOcr::showPixels(std::move(data), imgW, resultH);
+		WeShotOcr::showPixels(std::move(data), imgW, resultH, true);
+		return true;
+	}
+	bool translate()
+	{
+		if (imgData.empty() || imgW <= 0 || resultH <= 0) return false;
+		stopCap();
+		auto data = imgData;
+		WeShotOcr::showTranslationPixels(std::move(data), imgW, resultH, true);
 		return true;
 	}
 private:
@@ -62,3 +70,5 @@ private:
 	int resultH{ 0 };
 	POINT capStartPos{};
 };
+
+

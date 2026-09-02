@@ -7,6 +7,7 @@
 #include "./Win/WinCap.h"
 #include "./Win/WinPin.h"
 #include "./Win/WinSetting.h"
+#include "ClipboardHistory.h"
 
 std::unique_ptr<App> app;
 
@@ -28,6 +29,7 @@ void App::dispose()
     WinPin::dispose();
     WinCap::dispose();
     WinSetting::dispose();
+    ClipboardHistory::dispose();
     Lang::dispose();
     Setting::dispose();
     app.reset();
@@ -107,6 +109,7 @@ App::App()
     else {
         bool flag = app->refuseSecondInstance();
         if (flag) return;
+        ClipboardHistory::init();
         Tray::init();
 		// 开机自启不启动截图；--enter=tray 也一样，升级完重启新版本走的就是它 ——
 		// 都是"只挂个托盘图标待命"，这条路上一个窗口都不建，图形设备也就根本不会创建
@@ -117,3 +120,4 @@ App::App()
 		WinCap::init();//默认情况下，应用启动随即进入截图模式
     }
 }
+

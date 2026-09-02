@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include <include/Ling.h>
 #include <dpapi.h>
 #include <wincrypt.h>
@@ -7,13 +7,32 @@
 #include "Lang.h"
 #include "Win/WinCap.h"
 #include "App.h"
+#include "ClipboardHistory.h"
 
 namespace {
     std::unique_ptr<Setting> setting;
     constexpr int capShortcutMsgId{ 100 };
-    // 配置文件的默认内容。空文件、坏 JSON、缺键都拿它兜底，所以这里列出的每一项
-    // 都是代码里会直接按名字取的（见 getLang / getAutoStart / initShortcutKeys）
-    constexpr std::wstring_view defaultConfig{ LR"""({"common":{"autoStart":false,"language":"zh-CN"},"shortcutKey":{"cap":"Ctrl+Alt+A"}})""" };
+    constexpr int clipboardShortcutMsgId{ 101 };
+
+    int shortcutMsgId(const std::wstring& type)
+    {
+        if (type == L"cap") return capShortcutMsgId;
+        if (type == L"clipboard") return clipboardShortcutMsgId;
+        return 0;
+    }
+
+    std::wstring shortcutDefault(const std::wstring& type)
+    {
+        if (type == L"cap") return L"Ctrl+Alt+A";
+        // Do not take Win+V from the Windows clipboard and do not take
+        // Ctrl+Shift+V from applications that use it for plain-text paste.
+        if (type == L"clipboard") return L"Ctrl+Alt+V";
+        return L"";
+    }
+
+    // 配置文件的默认内容。旧版 config.json 没有 clipboard 键时，getShortcutKey
+    // 仍会回落到 Ctrl+Alt+V，因此升级不会要求用户删配置重来。
+    constexpr std::wstring_view defaultConfig{ LR"""({"common":{"autoStart":false,"language":"zh-CN"},"shortcutKey":{"cap":"Ctrl+Alt+A","clipboard":"Ctrl+Alt+V"}})""" };
 
     std::wstring protectText(const std::wstring& value)
     {
@@ -22,7 +41,7 @@ namespace {
         in.pbData = reinterpret_cast<BYTE*>(const_cast<wchar_t*>(value.data()));
         in.cbData = static_cast<DWORD>(value.size() * sizeof(wchar_t));
         DATA_BLOB out{};
-        if (!CryptProtectData(&in, L"WeShot Gemini API Key", nullptr, nullptr, nullptr,
+        if (!CryptProtectData(&in, L"StarCap Gemini API Key", nullptr, nullptr, nullptr,
             CRYPTPROTECT_UI_FORBIDDEN, &out)) {
             return L"";
         }
@@ -83,7 +102,7 @@ Setting::Setting() :dataPath{ initDataPath() }, configPath{ initConfigPath() }
             configObj = obj;
             return;
         }
-        MessageBox(nullptr, L"config.json parse error，use default config", L"ScreenCapture", MB_OK | MB_ICONWARNING);
+        MessageBox(nullptr, L"config.json parse error，use default config", L"StarCap", MB_OK | MB_ICONWARNING);
     }
     configObj = JsonObject::Parse(defaultConfig); 
 }
@@ -96,6 +115,9 @@ void Setting::init()
 {
     auto ptr = new Setting();
     setting.reset(ptr);
+    // Reconcile the inherited Run entry on first StarCap startup as well as on
+    // later launches. This preserves the user's existing auto-start preference.
+    ptr->setAutoStart(ptr->getAutoStart());
 }
 
 void Setting::dispose()
@@ -125,45 +147,56 @@ void Setting::setShortcutKey(const std::wstring& type, const std::vector<std::ws
     {
         str += L"+" + keys[i];
     }
-    str.erase(0,1);
-    auto shortcutKey = configObj.GetNamedObject(L"shortcutKey");
+    if (!str.empty()) str.erase(0, 1);
+
+    auto shortcutKey = configObj.GetNamedObject(L"shortcutKey", nullptr);
+    if (!shortcutKey) {
+        shortcutKey = JsonObject();
+        configObj.SetNamedValue(L"shortcutKey", shortcutKey);
+    }
     shortcutKey.SetNamedValue(type, JsonValue::CreateStringValue(str));
-    auto app = Ling::App::get();
-    app->unRegHotKey(capShortcutMsgId);
-    app->regHotKey(str, capShortcutMsgId);
+
+    const int msgId = shortcutMsgId(type);
+    if (msgId != 0) {
+        auto app = Ling::App::get();
+        app->unRegHotKey(msgId);
+        if (!str.empty()) app->regHotKey(str, msgId);
+    }
     save();
 }
 
 std::wstring Setting::getShortcutKey(const std::wstring& type)
 {
-    // 一路用带默认值的重载：启动时 ensureDefaults 已经补齐过，这里只是别让运行期
-    // 意外（配置被外部改动、问了个没配过的 type）变成一次崩溃
     auto obj = configObj.GetNamedObject(L"shortcutKey", nullptr);
-    if (!obj) return L"";
-    return std::wstring{ obj.GetNamedString(type, L"") };
+    if (!obj) return shortcutDefault(type);
+    auto value = std::wstring{ obj.GetNamedString(type, L"") };
+    return value.empty() ? shortcutDefault(type) : value;
 }
 
 void Setting::setAutoStart(bool autoStart)
 {
     std::wstring runKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
-    if (autoStart) {
-        wchar_t buffer[MAX_PATH];
-        GetModuleFileName(nullptr, buffer, MAX_PATH);
-        auto curPath = std::filesystem::path(buffer);
-        std::wstring commandLine = std::format(L"\"{}\" --auto-start", curPath.wstring());
-        HKEY hKey;
-        if (RegOpenKeyEx(HKEY_CURRENT_USER, runKey.data(), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
-            RegSetValueEx(hKey, L"ScreenCapture", 0, REG_SZ, (const BYTE*)commandLine.data(), (commandLine.size() + 1) * sizeof(wchar_t));
-            RegCloseKey(hKey);
+    const auto legacyValueName = std::wstring(L"Screen") + L"Capture";
+    HKEY hKey{};
+    if (RegOpenKeyEx(HKEY_CURRENT_USER, runKey.data(), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
+        if (autoStart) {
+            wchar_t buffer[MAX_PATH]{};
+            GetModuleFileName(nullptr, buffer, MAX_PATH);
+            auto curPath = std::filesystem::path(buffer);
+            std::wstring commandLine = std::format(L"\"{}\" --auto-start", curPath.wstring());
+            RegSetValueEx(hKey, L"StarCap", 0, REG_SZ,
+                reinterpret_cast<const BYTE*>(commandLine.c_str()),
+                static_cast<DWORD>((commandLine.size() + 1) * sizeof(wchar_t)));
+            // Remove the inherited startup entry after the StarCap entry exists.
+            RegDeleteValue(hKey, legacyValueName.c_str());
         }
-    }
-    else {
-        HKEY hKey;
-        if (RegOpenKeyEx(HKEY_CURRENT_USER, runKey.data(), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
-            RegDeleteValue(hKey, L"ScreenCapture");
-            RegCloseKey(hKey);
+        else {
+            RegDeleteValue(hKey, L"StarCap");
+            RegDeleteValue(hKey, legacyValueName.c_str());
         }
+        RegCloseKey(hKey);
     }
+
     auto common = configObj.GetNamedObject(L"common", nullptr);
     if (!common) {
         common = JsonObject();
@@ -172,7 +205,6 @@ void Setting::setAutoStart(bool autoStart)
     common.SetNamedValue(L"autoStart", JsonValue::CreateBooleanValue(autoStart));
     save();
 }
-
 bool Setting::getAutoStart()
 {
     auto common = configObj.GetNamedObject(L"common", nullptr);
@@ -181,23 +213,35 @@ bool Setting::getAutoStart()
 
 std::filesystem::path Setting::initDataPath()
 {
-    PWSTR pathTmp;
+    PWSTR pathTmp{};
     auto hr = SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &pathTmp);
     if (FAILED(hr)) {
         _ASSERT_EXPR(FALSE, L"get roaming path，error");
         return L"";
     }
-    auto dataPath = std::filesystem::path{ pathTmp };
+
+    const auto roamingRoot = std::filesystem::path{ pathTmp };
     CoTaskMemFree(pathTmp);
-    dataPath.append("ScreenCapture");
-    if (!std::filesystem::exists(dataPath)) {
-        if (!std::filesystem::create_directories(dataPath)) {
-            _ASSERT_EXPR(FALSE, L"create data path，error");
-        }
+
+    const auto legacyName = std::wstring(L"Screen") + L"Capture";
+    const auto legacyPath = roamingRoot / legacyName;
+    auto dataPath = roamingRoot / L"StarCap";
+
+    std::error_code ec;
+    std::filesystem::create_directories(dataPath, ec);
+    if (ec && !std::filesystem::exists(dataPath)) {
+        _ASSERT_EXPR(FALSE, L"create StarCap data path，error");
+        return dataPath;
+    }
+
+    // Non-destructive one-time migration. Existing StarCap files always win.
+    if (std::filesystem::is_directory(legacyPath)) {
+        ec.clear();
+        std::filesystem::copy(legacyPath, dataPath,
+            std::filesystem::copy_options::recursive | std::filesystem::copy_options::skip_existing, ec);
     }
     return dataPath;
 }
-
 std::filesystem::path Setting::initConfigPath()
 {
     // 与插件的查找顺序一致（见 Util.cpp 里的 findImageReader）：先看 exe 同目录。
@@ -334,17 +378,26 @@ void Setting::setUpdateCheckDay(long long day)
 void Setting::initShortcutKeys()
 {
     auto lingApp = Ling::App::get();
-    // 取不到就用默认的那个组合：热键注册不上顶多是快捷键不好用，不该让程序起不来
-    std::wstring capStr{ getShortcutKey(L"cap") };
-    if (capStr.empty()) capStr = L"Ctrl+Alt+A";
-    lingApp->regHotKey(capStr, capShortcutMsgId);
+
+    const auto capStr = getShortcutKey(L"cap");
+    if (!capStr.empty()) lingApp->regHotKey(capStr, capShortcutMsgId);
+
+    const auto clipboardStr = getShortcutKey(L"clipboard");
+    if (!clipboardStr.empty()) lingApp->regHotKey(clipboardStr, clipboardShortcutMsgId);
 
     lingApp->onHotKey.add([this](UINT msg) {
         if (msg == capShortcutMsgId) {
             WinCap::init();
+        }
+        else if (msg == clipboardShortcutMsgId) {
+            ClipboardHistory::toggle();
         }
     });
     lingApp->onSecondInstance.add([this]() {
         WinCap::init();
     });
 }
+
+
+
+

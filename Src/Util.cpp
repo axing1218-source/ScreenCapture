@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include <wincodec.h>
 #include <shobjidl.h>
 #include <format>
@@ -292,7 +292,7 @@ bool Util::openWithImageReader(const int w, const int h, BYTE* data)
 	auto exePath = findImageReader();
 	if (exePath.empty()) {
 		// 插件没装，直接把用户带到下载页，不再多弹一层提示
-		ShellExecute(nullptr, L"open", L"https://github.com/xland/ImageReader/releases", nullptr, nullptr, SW_SHOWNORMAL);
+		ShellExecute(nullptr, L"open", L"https://github.com/axing1218-source", nullptr, nullptr, SW_SHOWNORMAL);
 		return false;
 	}
 	auto imgPath = Setting::get()->getDataPath().append(L"ocr_" + createFileName(L"png")).wstring();
@@ -315,43 +315,129 @@ bool Util::openWithImageReader(const int w, const int h, BYTE* data)
 
 std::wstring Util::decodeQrCode(const int w, const int h, BYTE* data)
 {
-	std::wstring result;
-	if (w <= 0 || h <= 0 || !data) return result;
-	// quirc_new 和 quirc_resize 是这个库里唯一会申请内存的两个函数，选区大的时候
-	// 那块灰度缓冲不小，所以下面每条返回路径都得走到 quirc_destroy
-	auto qr = quirc_new();
-	if (!qr) return result;
-	if (quirc_resize(qr, w, h) < 0) {
-		quirc_destroy(qr);
-		return result;
-	}
-	// quirc_begin 给的就是它内部那块缓冲，一个像素一字节，直接把灰度写进去
-	int bufW{ 0 }, bufH{ 0 };
-	auto buffer = quirc_begin(qr, &bufW, &bufH);
-	const size_t count = (size_t)w * h;
-	for (size_t i = 0; i < count; i++) {
-		auto px = data + i * 4; //入参是 BGRA
-		buffer[i] = (uint8_t)((px[2] * 77 + px[1] * 150 + px[0] * 29) >> 8);
-	}
-	quirc_end(qr);
-	auto codeCount = quirc_count(qr);
-	for (int i = 0; i < codeCount; i++) {
-		quirc_code code{};
-		quirc_data qrData{};
-		quirc_extract(qr, i, &code);
-		auto err = quirc_decode(&code, &qrData);
-		if (err == QUIRC_ERROR_DATA_ECC) {
-			// 可能是镜像的码（ISO 18004:2015 允许），翻过来再试一次
-			quirc_flip(&code);
-			err = quirc_decode(&code, &qrData);
-		}
-		if (err != QUIRC_SUCCESS) continue;
-		auto text = qrPayloadToWStr(qrData.payload, qrData.payload_len, qrData.data_type);
-		if (text.empty()) continue;
-		if (!result.empty()) result += L"\n";
-		result += text;
-	}
-	quirc_destroy(qr);
-	return result;
+    if (w <= 0 || h <= 0 || !data) return L"";
+
+    auto decodeGray = [](const std::vector<uint8_t>& gray, int gw, int gh) -> std::wstring {
+        if (gw <= 0 || gh <= 0 || gray.size() < (size_t)gw * gh) return L"";
+        auto qr = quirc_new();
+        if (!qr) return L"";
+        if (quirc_resize(qr, gw, gh) < 0) { quirc_destroy(qr); return L""; }
+        int bw = 0, bh = 0;
+        auto dst = quirc_begin(qr, &bw, &bh);
+        memcpy(dst, gray.data(), (size_t)gw * gh);
+        quirc_end(qr);
+
+        std::wstring out;
+        const int count = quirc_count(qr);
+        for (int i = 0; i < count; ++i) {
+            quirc_code code{};
+            quirc_data qrData{};
+            quirc_extract(qr, i, &code);
+            auto err = quirc_decode(&code, &qrData);
+            if (err == QUIRC_ERROR_DATA_ECC) {
+                quirc_flip(&code);
+                err = quirc_decode(&code, &qrData);
+            }
+            if (err != QUIRC_SUCCESS) continue;
+            auto text = qrPayloadToWStr(qrData.payload, qrData.payload_len, qrData.data_type);
+            if (text.empty()) continue;
+            if (!out.empty()) out += L"\n";
+            out += text;
+        }
+        quirc_destroy(qr);
+        return out;
+    };
+
+    std::vector<uint8_t> gray((size_t)w * h);
+    std::array<unsigned long long, 256> hist{};
+    for (size_t i = 0; i < gray.size(); ++i) {
+        auto px = data + i * 4; // BGRA
+        uint8_t g = (uint8_t)((px[2] * 77 + px[1] * 150 + px[0] * 29) >> 8);
+        gray[i] = g;
+        ++hist[g];
+    }
+
+    // Fast path: preserve existing behaviour first.
+    if (auto text = decodeGray(gray, w, h); !text.empty()) return text;
+
+    auto addQuietZone = [](const std::vector<uint8_t>& src, int sw, int sh, int pad, uint8_t bg,
+                           int& ow, int& oh) {
+        ow = sw + pad * 2; oh = sh + pad * 2;
+        std::vector<uint8_t> dst((size_t)ow * oh, bg);
+        for (int y = 0; y < sh; ++y)
+            memcpy(dst.data() + (size_t)(y + pad) * ow + pad,
+                   src.data() + (size_t)y * sw, (size_t)sw);
+        return dst;
+    };
+
+    // Tight screenshot selections often cut away QR's required quiet zone.
+    {
+        int pw = 0, ph = 0;
+        int pad = std::clamp(std::min(w, h) / 12, 12, 48);
+        auto padded = addQuietZone(gray, w, h, pad, 255, pw, ph);
+        if (auto text = decodeGray(padded, pw, ph); !text.empty()) return text;
+    }
+
+    // Otsu threshold restores square modules that were softened by chat-app scaling.
+    unsigned long long total = (unsigned long long)w * h;
+    unsigned long long sum = 0;
+    for (int i = 0; i < 256; ++i) sum += (unsigned long long)i * hist[i];
+    unsigned long long wB = 0, sumB = 0;
+    double best = -1.0;
+    int threshold = 128;
+    for (int t = 0; t < 255; ++t) {
+        wB += hist[t];
+        if (!wB) continue;
+        const auto wF = total - wB;
+        if (!wF) break;
+        sumB += (unsigned long long)t * hist[t];
+        const double mB = (double)sumB / wB;
+        const double mF = (double)(sum - sumB) / wF;
+        const double between = (double)wB * (double)wF * (mB - mF) * (mB - mF);
+        if (between > best) { best = between; threshold = t; }
+    }
+
+    std::vector<uint8_t> binary(gray.size()), inverted(gray.size());
+    for (size_t i = 0; i < gray.size(); ++i) {
+        binary[i] = gray[i] <= threshold ? 0 : 255;
+        inverted[i] = 255 - binary[i];
+    }
+    if (auto text = decodeGray(binary, w, h); !text.empty()) return text;
+    if (auto text = decodeGray(inverted, w, h); !text.empty()) return text;
+
+    // Small QR codes benefit from integer nearest-neighbour enlargement: no new
+    // information is invented, but quirc gets several pixels per module again.
+    int factor = 1;
+    const int minSide = std::min(w, h), maxSide = std::max(w, h);
+    if (minSide < 180) factor = 4;
+    else if (minSide < 360) factor = 3;
+    else if (minSide < 700) factor = 2;
+    while (factor > 1 && (maxSide * factor > 2800 || (long long)w * h * factor * factor > 8000000LL)) --factor;
+
+    if (factor > 1) {
+        auto upscale = [factor](const std::vector<uint8_t>& src, int sw, int sh, int& ow, int& oh) {
+            ow = sw * factor; oh = sh * factor;
+            std::vector<uint8_t> dst((size_t)ow * oh);
+            for (int y = 0; y < oh; ++y) {
+                const int sy = y / factor;
+                for (int x = 0; x < ow; ++x) dst[(size_t)y * ow + x] = src[(size_t)sy * sw + x / factor];
+            }
+            return dst;
+        };
+        int uw = 0, uh = 0;
+        auto up = upscale(binary, w, h, uw, uh);
+        int pw = 0, ph = 0;
+        const int pad = std::clamp(16 * factor, 24, 96);
+        auto padded = addQuietZone(up, uw, uh, pad, 255, pw, ph);
+        if (auto text = decodeGray(padded, pw, ph); !text.empty()) return text;
+
+        for (auto& v : up) v = 255 - v;
+        auto paddedInv = addQuietZone(up, uw, uh, pad, 255, pw, ph);
+        if (auto text = decodeGray(paddedInv, pw, ph); !text.empty()) return text;
+    }
+
+    return L"";
 }
+
+
 

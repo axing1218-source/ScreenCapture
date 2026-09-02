@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "../Win/WinCap.h"
 #include "../Win/CapLong.h"
 #include "../Lang.h"
@@ -43,10 +43,11 @@ void ToolLong::onCreated()
 		btn->setHeightPercent(100.f);
 		btn->setFlexGrow(1.f);
 		btn->setHoverBg(0xF2F2F2ff);
-		if (btnIds[i] == L"auto") {
+		if (btnIds[i] == L"auto" || btnIds[i] == L"translate") {
 			btn->setFontFamily(L"Microsoft YaHei");
 			btn->setFontSize(12.f);
-			tip->bind(btn, L"自动滚动");
+			if (btnIds[i] == L"auto") tip->bind(btn, L"自动滚动");
+			else tip->bind(btn, L"翻译长截图");
 		}
 		else {
 			btn->setFontFamily(L"icon");
@@ -70,6 +71,11 @@ void ToolLong::onClick(Ling::Button* btn)
 		win->close();
 		return;
 	}
+	if (btn->id == L"translate") {
+		if (!capLong || !capLong->translate()) return;
+		win->close();
+		return;
+	}
 	if (btn->id == L"pin") {
 		win->longPin();
 	}
@@ -87,3 +93,4 @@ void ToolLong::onMinMaxInfo(MINMAXINFO* mmi)
 	mmi->ptMinTrackSize.x = 1;
 	mmi->ptMinTrackSize.y = 1;
 }
+

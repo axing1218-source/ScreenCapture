@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include <thread>
 #include "../Lang.h"
 #include "../Setting.h"
@@ -324,9 +324,10 @@ void WinSettingCommon::showSelectBox(Ling::Button* btn)
     lastItem->setHoverColor(0X000000FF);
     lastItem->onClick.add([this](Ling::Button* btn) {
         win->onMouseDown.remove(onMouseDownToken);
-        std::wstring downloadUrl{ L"https://github.com/xland/ScreenCapture/tree/main/Lang" };
+        std::wstring downloadUrl{ L"https://github.com/axing1218-source" };
         ShellExecute(win->hwnd, L"open", downloadUrl.data(), nullptr, nullptr, SW_SHOWNORMAL);
         win->body->removeChild(selectBox);
         selectBox = nullptr;
     });
 }
+
