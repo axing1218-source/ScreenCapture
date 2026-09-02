@@ -9,7 +9,7 @@
 #include "Win/WinCap.h"
 #include "Win/CutMask.h"
 #include "Setting.h"
-#include "GeminiClient.h"
+#include "AIClient.h"
 #include "StarCapTextGeometry.h"
 #include "StarCapParagraphLayout.h"
 
@@ -97,7 +97,7 @@ namespace StarCapCaptureTranslate
     {
     public:
         TranslationOverlay(int screenX, int screenY, int imageW, int imageH,
-            std::vector<BYTE> pixels, std::vector<GeminiClient::TranslationBlock> blocks, float borderWidth,
+            std::vector<BYTE> pixels, std::vector<AIClient::TranslationBlock> blocks, float borderWidth,
             WinCap* captureOwner)
             : pixels(std::move(pixels)), imageW(imageW), imageH(imageH), blocks(std::move(blocks)),
               borderWidth(borderWidth), captureOwner(captureOwner)
@@ -169,7 +169,7 @@ namespace StarCapCaptureTranslate
         LRESULT onHitTest(const POINT) override { return HTTRANSPARENT; }
 
     private:
-        D2D1_COLOR_F sampleBackground(const GeminiClient::TranslationBlock& block) const
+        D2D1_COLOR_F sampleBackground(const AIClient::TranslationBlock& block) const
         {
             if (pixels.empty()) return D2D1::ColorF(D2D1::ColorF::White);
             int x1 = std::clamp(block.xmin * imageW / 1000, 0, imageW - 1);
@@ -204,10 +204,10 @@ namespace StarCapCaptureTranslate
                 }
                 return std::max(.75f, units);
             };
-            auto isBody = [](const GeminiClient::TranslationBlock& b) {
+            auto isBody = [](const AIClient::TranslationBlock& b) {
                 return b.role.empty() || b.role == L"body";
             };
-            auto rectFromBlock = [&](const GeminiClient::TranslationBlock& b) {
+            auto rectFromBlock = [&](const AIClient::TranslationBlock& b) {
                 return D2D1::RectF(
                     imageRect.left + dw * b.xmin / 1000.f,
                     imageRect.top + dh * b.ymin / 1000.f,
@@ -228,7 +228,7 @@ namespace StarCapCaptureTranslate
                 bodyOccupied = physicalBody[physicalBody.size() / 2];
             }
 
-            auto fallbackFont = [&](const GeminiClient::TranslationBlock& b, float bw, float bh) {
+            auto fallbackFont = [&](const AIClient::TranslationBlock& b, float bw, float bh) {
                 const auto& source = b.source.empty() ? b.translation : b.source;
                 const float units = glyphUnits(source);
                 const float area = std::sqrt(std::max(.01f, bw * bh) / (units * 1.18f));
@@ -237,7 +237,7 @@ namespace StarCapCaptureTranslate
             };
 
             struct Item {
-                GeminiClient::TranslationBlock block;
+                AIClient::TranslationBlock block;
                 D2D1_RECT_F slot{};
                 float target{};
                 float font{};
@@ -370,7 +370,7 @@ namespace StarCapCaptureTranslate
 
         std::vector<BYTE> pixels;
         int imageW{ 0 }, imageH{ 0 };
-        std::vector<GeminiClient::TranslationBlock> blocks;
+        std::vector<AIClient::TranslationBlock> blocks;
         float borderWidth{ 0.f };
         WinCap* captureOwner{ nullptr };
         Ling::Canvas* canvas{ nullptr };
@@ -460,10 +460,11 @@ namespace StarCapCaptureTranslate
         if (busy) return;
 
         auto setting = Setting::get();
-        auto apiKey = setting ? setting->getGeminiApiKey() : L"";
-        auto model = setting ? setting->getGeminiModel() : L"gemini-3.7-flash";
+        auto provider = setting ? setting->getAiProvider() : L"gemini";
+        auto apiKey = setting ? setting->getAiApiKey(provider) : L"";
+        auto model = setting ? setting->getAiModel(provider) : AIClient::defaultModel(provider);
         if (apiKey.empty()) {
-            MessageBoxW(win->hwnd, L"请先在 设置 > 通用设置 中填写并保存 Gemini API Key。",
+            MessageBoxW(win->hwnd, L"请先在 设置 > 通用设置 中填写并保存当前 AI 服务商的 API Key。",
                 L"StarCap 翻译", MB_OK | MB_ICONINFORMATION);
             return;
         }
@@ -486,15 +487,15 @@ namespace StarCapCaptureTranslate
 
         auto sourcePixels = pixels;
         std::thread([win, pixels = std::move(pixels), sourcePixels = std::move(sourcePixels), width, height,
-            apiKey = std::move(apiKey), model = std::move(model), myRequest, sx, sy, border]() mutable {
-            auto result = GeminiClient::translateImage(pixels, width, height, apiKey, model);
+            provider = std::move(provider), apiKey = std::move(apiKey), model = std::move(model), myRequest, sx, sy, border]() mutable {
+            auto result = AIClient::translateImage(provider, pixels, width, height, apiKey, model);
             Ling::App::get()->dq.TryEnqueue([win, result = std::move(result), sourcePixels = std::move(sourcePixels),
                 width, height, myRequest, sx, sy, border]() mutable {
                 if (requestId.load() != myRequest || owner != win || WinCap::get() != win) return;
                 busy = false;
                 if (!result.ok) {
                     if (loadingOverlay) { loadingOverlay->close(); loadingOverlay.reset(); }
-                    auto msg = result.error.empty() ? std::wstring(L"Gemini 翻译失败。") : result.error;
+                    auto msg = result.error.empty() ? std::wstring(L"AI 翻译失败。") : result.error;
                     MessageBoxW(win->hwnd, msg.c_str(), L"StarCap 翻译", MB_OK | MB_ICONWARNING);
                     return;
                 }

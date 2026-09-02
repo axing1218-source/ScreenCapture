@@ -3,6 +3,8 @@
 #include <Windows.h>
 #include <winhttp.h>
 #include <algorithm>
+#include <cmath>
+#include <cwctype>
 #include <format>
 #include <string>
 #include <vector>

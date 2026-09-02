@@ -14,7 +14,7 @@
 #include "Win/WinPin.h"
 #include "Util.h"
 #include "Setting.h"
-#include "GeminiClient.h"
+#include "AIClient.h"
 #include "StarCapTextGeometry.h"
 #include "StarCapParagraphLayout.h"
 
@@ -185,50 +185,50 @@ namespace StarCapOcrV2
         void beginImageTranslation()
         {
             originalText.clear();
-            geminiOcrBlocks.clear();
+            aiOcrBlocks.clear();
             if (textBox) textBox->setText(L"");
-            startGeminiTranslation();
+            startAiTranslation();
         }
 
         void setLocalOcrResult(Result result)
         {
             if (!textBox || !status) return;
-            geminiOcrBlocks.clear();
+            aiOcrBlocks.clear();
             if (!result.error.empty()) {
                 originalText.clear();
                 textBox->setText(result.error);
-                status->setText(L"未设置 Gemini API Key，当前使用 Windows OCR");
+                status->setText(L"当前 AI 服务商未设置 API Key，使用 Windows OCR");
             }
             else {
                 originalText = std::move(result.text);
                 textBox->setText(originalText);
-                status->setText(L"未设置 Gemini API Key，当前使用 Windows OCR；可在设置中填写 Key");
+                status->setText(L"当前 AI 服务商未设置 API Key，使用 Windows OCR；可在设置中填写 Key");
             }
             textBox->setPlaceholder(L"");
             showingTranslationText = false;
             refresh();
         }
 
-        void setGeminiOcrResult(GeminiClient::OcrResult result)
+        void setAiOcrResult(AIClient::OcrResult result)
         {
             if (!textBox || !status) return;
             if (!result.ok) {
-                originalText.clear(); geminiOcrBlocks.clear();
+                originalText.clear(); aiOcrBlocks.clear();
                 textBox->setPlaceholder(L"");
                 textBox->setText(result.error.empty() ? L"Gemini OCR 失败。" : result.error);
-                status->setText(L"Gemini 文字识别失败；不会静默退回低准确率 OCR");
+                status->setText(L"AI 文字识别失败；不会静默退回低准确率 OCR");
                 return;
             }
             originalText = std::move(result.text);
-            geminiOcrBlocks = std::move(result.blocks);
+            aiOcrBlocks = std::move(result.blocks);
             showingTranslationText = false;
             textBox->setPlaceholder(L"");
             textBox->setText(originalText);
-            status->setText(L"Gemini 文字识别完成；可拖选文字复制，点击“翻译”继续");
+            status->setText(L"AI 文字识别完成；可拖选文字复制，点击“翻译”继续");
             refresh();
         }
 
-        void setTranslationResult(GeminiClient::TranslationResult result)
+        void setTranslationResult(AIClient::TranslationResult result)
         {
             translating = false;
             if (!status || !textBox) return;
@@ -350,7 +350,7 @@ namespace StarCapOcrV2
             translateBtn->setText(L"翻译"); translateBtn->setSize(78.f, 28.f); translateBtn->setFontSize(12.f);
             translateBtn->setColor(0xFFFFFFFF); translateBtn->setBg(0x1677FFFF);
             translateBtn->setHoverBg(0x4096FFFF); translateBtn->setBorderRadius(4.f);
-            translateBtn->onClick.add([this](Ling::Button*) { startGeminiTranslation(); });
+            translateBtn->onClick.add([this](Ling::Button*) { startAiTranslation(); });
 
             status = right->makeChild<Ling::Label>();
             status->setHeight(30.f); status->setWidthPercent(100.f);
@@ -482,7 +482,7 @@ namespace StarCapOcrV2
             updateZoomLabel();
             refresh();
         }
-        D2D1_COLOR_F sampleBackground(const GeminiClient::TranslationBlock& block) const
+        D2D1_COLOR_F sampleBackground(const AIClient::TranslationBlock& block) const
         {
             if (pixels.empty() || imageW <= 0 || imageH <= 0) return D2D1::ColorF(D2D1::ColorF::White);
             int x1 = std::clamp(block.xmin * imageW / 1000, 0, imageW - 1);
@@ -518,10 +518,10 @@ namespace StarCapOcrV2
                 }
                 return std::max(.75f, units);
             };
-            auto isBody = [](const GeminiClient::TranslationBlock& b) {
+            auto isBody = [](const AIClient::TranslationBlock& b) {
                 return b.role.empty() || b.role == L"body";
             };
-            auto rectFromBlock = [&](const GeminiClient::TranslationBlock& b) {
+            auto rectFromBlock = [&](const AIClient::TranslationBlock& b) {
                 return D2D1::RectF(
                     imageRect.left + dw * b.xmin / 1000.f,
                     imageRect.top + dh * b.ymin / 1000.f,
@@ -542,7 +542,7 @@ namespace StarCapOcrV2
                 bodyOccupied = physicalBody[physicalBody.size() / 2];
             }
 
-            auto fallbackFont = [&](const GeminiClient::TranslationBlock& b, float bw, float bh) {
+            auto fallbackFont = [&](const AIClient::TranslationBlock& b, float bw, float bh) {
                 const auto& source = b.source.empty() ? b.translation : b.source;
                 const float units = glyphUnits(source);
                 const float area = std::sqrt(std::max(.01f, bw * bh) / (units * 1.18f));
@@ -551,7 +551,7 @@ namespace StarCapOcrV2
             };
 
             struct Item {
-                GeminiClient::TranslationBlock block;
+                AIClient::TranslationBlock block;
                 D2D1_RECT_F slot{};
                 float target{};
                 float font{};
@@ -751,14 +751,15 @@ namespace StarCapOcrV2
             cpu->Unmap(); return true;
         }
 
-        void startGeminiTranslation()
+        void startAiTranslation()
         {
             if (translating) return;
             if (translationReady) { showMode(!showTranslatedImage); return; }
             auto setting = Setting::get();
-            auto apiKey = setting ? setting->getGeminiApiKey() : L"";
-            auto model = setting ? setting->getGeminiModel() : L"gemini-3.7-flash";
-            if (apiKey.empty()) { if (status) status->setText(L"请先在“设置 > 通用设置”填写 Gemini API Key"); return; }
+            auto provider = setting ? setting->getAiProvider() : L"gemini";
+            auto apiKey = setting ? setting->getAiApiKey(provider) : L"";
+            auto model = setting ? setting->getAiModel(provider) : AIClient::defaultModel(provider);
+            if (apiKey.empty()) { if (status) status->setText(L"请先在“设置 > 通用设置”填写当前 AI 服务商的 API Key"); return; }
             translating = true;
             if (translateBtn) translateBtn->setText(L"翻译中...");
             if (textBox) {
@@ -774,18 +775,18 @@ namespace StarCapOcrV2
             const bool preferImageTranslation = true;
             if (status) status->setText(preferImageTranslation
                 ? L"正在按完整图片版式翻译..."
-                : (geminiOcrBlocks.empty()
-                    ? L"正在让 Gemini 识别图片并翻译..."
+                : (aiOcrBlocks.empty()
+                    ? L"正在让当前 AI 服务识别图片并翻译..."
                     : L"正在翻译已识别文字（无需再次上传图片）..."));
             const auto myRequest = requestId.load();
-            auto blocks = geminiOcrBlocks;
+            auto blocks = aiOcrBlocks;
             auto imagePixels = pixels;
             std::thread([blocks = std::move(blocks), imagePixels = std::move(imagePixels),
-                width = imageW, height = imageH, apiKey = std::move(apiKey), model = std::move(model),
+                width = imageW, height = imageH, provider = std::move(provider), apiKey = std::move(apiKey), model = std::move(model),
                 myRequest, preferImageTranslation]() mutable {
-                GeminiClient::TranslationResult r;
-                if (!blocks.empty() && !preferImageTranslation) r = GeminiClient::translateOcrBlocks(blocks, apiKey, model);
-                else r = GeminiClient::translateImage(imagePixels, width, height, apiKey, model);
+                AIClient::TranslationResult r;
+                if (!blocks.empty() && !preferImageTranslation) r = AIClient::translateOcrBlocks(provider, blocks, apiKey, model);
+                else r = AIClient::translateImage(provider, imagePixels, width, height, apiKey, model);
                 Ling::App::get()->dq.TryEnqueue([r = std::move(r), myRequest]() mutable {
                     if (requestId.load() != myRequest || !activeWindow) return;
                     activeWindow->setTranslationResult(std::move(r));
@@ -854,8 +855,8 @@ namespace StarCapOcrV2
         POINT dragStart{ 0,0 };
         float dragStartOffsetX{ 0.f }, dragStartOffsetY{ 0.f };
         std::wstring originalText, translatedText;
-        std::vector<GeminiClient::OcrBlock> geminiOcrBlocks;
-        std::vector<GeminiClient::TranslationBlock> translationBlocks;
+        std::vector<AIClient::OcrBlock> aiOcrBlocks;
+        std::vector<AIClient::TranslationBlock> translationBlocks;
         bool translating{ false }, translationReady{ false };
         bool showingTranslationText{ false }, showTranslatedImage{ false };
     };
@@ -873,15 +874,16 @@ namespace StarCapOcrV2
         activeWindow->open();
 
         auto setting = Setting::get();
-        auto apiKey = setting ? setting->getGeminiApiKey() : L"";
-        auto model = setting ? setting->getGeminiModel() : L"gemini-3.7-flash";
+        auto provider = setting ? setting->getAiProvider() : L"gemini";
+        auto apiKey = setting ? setting->getAiApiKey(provider) : L"";
+        auto model = setting ? setting->getAiModel(provider) : AIClient::defaultModel(provider);
         if (!apiKey.empty()) {
-            std::thread([pixels = std::move(pixels), width, height, apiKey = std::move(apiKey),
+            std::thread([pixels = std::move(pixels), width, height, provider = std::move(provider), apiKey = std::move(apiKey),
                 model = std::move(model), myRequest]() mutable {
-                auto result = GeminiClient::recognizeImage(pixels, width, height, apiKey, model);
+                auto result = AIClient::recognizeImage(provider, pixels, width, height, apiKey, model);
                 Ling::App::get()->dq.TryEnqueue([result = std::move(result), myRequest]() mutable {
                     if (requestId.load() != myRequest || !activeWindow) return;
-                    activeWindow->setGeminiOcrResult(std::move(result));
+                    activeWindow->setAiOcrResult(std::move(result));
                 });
             }).detach();
         }
