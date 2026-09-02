@@ -11,6 +11,18 @@
 
 StarCap 已完成仓库重命名，并已从原 `xland/ScreenCapture` fork network 中独立。新的源码、文档、CI、Issue 和 Pull Request 均应以独立的 `axing1218-source/StarCap` 仓库为准。
 
+## Release 与自动更新
+
+StarCap 的用户更新通道以本仓库的 **GitHub Latest Release** 为唯一来源。
+
+- `Src/Version.h` 与 `Doc/version.json` 必须保持同一版本号。
+- 正式 Release 固定包含 `StarCap.exe`、`version.json` 和 `SHA256SUMS.txt`。
+- 客户端只读取 `axing1218-source/StarCap` 的 Latest Release；主分支上尚未发布的提交不会触发用户更新提示。
+- 客户端下载新版后会再次核对 `StarCap.exe` 自身的嵌入版本号，版本不一致时不会覆盖当前程序。
+- `.github/workflows/starcap-release.yml` 会在 `main` 上检测当前版本是否已经存在正式 Release；同一版本只发布一次。
+
+以后发布新版本时，应先同步更新 `Src/Version.h` 和 `Doc/version.json`，再合入 `main`。Release workflow 会为新的版本号构建并发布正式资产。
+
 ## 当前分支
 
 - `main`：StarCap 当前默认开发线。
