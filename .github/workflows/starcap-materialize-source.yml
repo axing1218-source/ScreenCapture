@@ -6,6 +6,9 @@ on:
     branches:
       - starcap-source-cleanup
 
+permissions:
+  contents: write
+
 jobs:
   materialize:
     runs-on: windows-latest
@@ -116,3 +119,19 @@ jobs:
           name: StarCap-v0.9.7-materialized-exe
           path: x64/Release/StarCap.exe
           if-no-files-found: error
+
+      - name: Commit verified materialized source
+        shell: pwsh
+        run: |
+          git add Src
+          git diff --cached --quiet
+          if ($LASTEXITCODE -eq 0) {
+            Write-Host 'No source materialization changes to commit.'
+            exit 0
+          }
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Materialize verified StarCap v0.9.7 source baseline'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git push origin HEAD:starcap-source-cleanup
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
