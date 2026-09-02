@@ -13,7 +13,7 @@
 #include "StarCapTextGeometry.h"
 #include "StarCapParagraphLayout.h"
 
-namespace WeShotCaptureTranslate
+namespace StarCapCaptureTranslate
 {
     class LoadingOverlay : public Ling::WinBase
     {
@@ -508,6 +508,7 @@ namespace WeShotCaptureTranslate
         }).detach();
     }
 }
+
 
 
 

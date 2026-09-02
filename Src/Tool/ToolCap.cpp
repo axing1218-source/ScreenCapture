@@ -1,9 +1,9 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include "../Win/WinCap.h"
 #include "../Lang.h"
 #include "../Tip.h"
-#include "../WeShotOcr.h"
-#include "../WeShotCaptureTranslate.h"
+#include "../StarCapOcr.h"
+#include "../StarCapCaptureTranslate.h"
 #include "ToolCap.h"
 
 ToolCap::ToolCap(WinCap* win) : Ling::WinBase(), win(win)
@@ -71,8 +71,8 @@ void ToolCap::onClick(Ling::Button* btn)
 	if (btn->id == L"mark") win->startPin();
 	else if (btn->id == L"long") win->startLong();
 	else if (btn->id == L"video") win->startVideo();
-	else if (btn->id == L"ocr") WeShotOcr::show(win);
-	else if (btn->id == L"translate") WeShotCaptureTranslate::toggle(win);
+	else if (btn->id == L"ocr") StarCapOcr::show(win);
+	else if (btn->id == L"translate") StarCapCaptureTranslate::toggle(win);
 	else if (btn->id == L"qrcode") win->startQrcode();
 	else if (btn->id == L"save") win->saveToFile();
 	else if (btn->id == L"clipboard") win->copyToClipboard();
@@ -84,3 +84,4 @@ void ToolCap::onMinMaxInfo(MINMAXINFO* mmi)
 	mmi->ptMinTrackSize.x = 1;
 	mmi->ptMinTrackSize.y = 1;
 }
+

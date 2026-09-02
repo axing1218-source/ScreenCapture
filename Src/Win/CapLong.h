@@ -1,6 +1,6 @@
 #pragma once
 #include <include/Ling.h>
-#include "../WeShotOcr.h"
+#include "../StarCapOcr.h"
 
 class WinCap;
 class ToolLong;
@@ -29,7 +29,7 @@ public:
 		if (imgData.empty() || imgW <= 0 || resultH <= 0) return false;
 		stopCap();
 		auto data = imgData;
-		WeShotOcr::showPixels(std::move(data), imgW, resultH, true);
+		StarCapOcr::showPixels(std::move(data), imgW, resultH, true);
 		return true;
 	}
 	bool translate()
@@ -37,7 +37,7 @@ public:
 		if (imgData.empty() || imgW <= 0 || resultH <= 0) return false;
 		stopCap();
 		auto data = imgData;
-		WeShotOcr::showTranslationPixels(std::move(data), imgW, resultH, true);
+		StarCapOcr::showTranslationPixels(std::move(data), imgW, resultH, true);
 		return true;
 	}
 private:
@@ -70,5 +70,6 @@ private:
 	int resultH{ 0 };
 	POINT capStartPos{};
 };
+
 
 

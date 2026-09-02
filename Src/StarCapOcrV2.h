@@ -18,7 +18,7 @@
 #include "StarCapTextGeometry.h"
 #include "StarCapParagraphLayout.h"
 
-namespace WeShotOcrV2
+namespace StarCapOcrV2
 {
     struct Result
     {
@@ -915,6 +915,7 @@ namespace WeShotOcrV2
         win->close();
     }
 }
+
 
 
 

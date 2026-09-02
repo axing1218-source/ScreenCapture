@@ -1,10 +1,10 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include <dwmapi.h>
 #include <include/Ling.h>
 #include "CutMask.h"
 #include "../Util.h"
 #include "../Setting.h"
-#include "../WeShotOcr.h"
+#include "../StarCapOcr.h"
 using namespace Microsoft::WRL;
 
 CutMask::CutMask(Ling::WinBase* win) :win{ win }
@@ -128,7 +128,7 @@ MaskHit CutMask::hitTest(POINT pos) const
 
 void CutMask::startAdjust(POINT pos)
 {
-	if (WeShotOcr::containsPoint(pos)) {
+	if (StarCapOcr::containsPoint(pos)) {
 		adjustHit = MaskHit::None;
 		return;
 	}
@@ -202,3 +202,4 @@ void CutMask::paint(ID2D1DeviceContext* ctx)
 	ctx->FillRectangle(layoutRect, brushBg.Get());
 	ctx->DrawTextLayout({ layoutRect.left + paddingMargin, layoutRect.top + paddingMargin }, layout.Get(), brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 }
+
