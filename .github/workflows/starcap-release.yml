@@ -9,8 +9,6 @@ on:
 permissions:
   contents: write
 
-# Only one release publisher may run at a time. A later run waits for the
-# current publisher, then re-checks whether that version already exists.
 concurrency:
   group: starcap-release
   cancel-in-progress: false
@@ -29,9 +27,19 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $text = Get-Content 'Src\Version.h' -Raw
-          $match = [regex]::Match($text, 'STARCAP_DISPLAY_VERSION\s+L"v([0-9]+\.[0-9]+\.[0-9]+)"')
-          if (-not $match.Success) { throw 'Unable to resolve STARCAP_DISPLAY_VERSION.' }
-          $version = $match.Groups[1].Value
+
+          $versionMatch = [regex]::Match($text, 'STARCAP_DISPLAY_VERSION\s+L"v([0-9]+\.[0-9]+\.[0-9]+)"')
+          if (-not $versionMatch.Success) { throw 'Unable to resolve STARCAP_DISPLAY_VERSION.' }
+          $version = $versionMatch.Groups[1].Value
+
+          $publicMatch = [regex]::Match($text, 'STARCAP_PUBLIC_VERSION\s+L"([^"]+)"')
+          $publicVersion = if ($publicMatch.Success) { $publicMatch.Groups[1].Value } else { "v$version" }
+
+          $tagMatch = [regex]::Match($text, 'STARCAP_RELEASE_TAG\s+"([^"]+)"')
+          $tag = if ($tagMatch.Success) { $tagMatch.Groups[1].Value } else { "v$version" }
+
+          $preMatch = [regex]::Match($text, 'STARCAP_PRERELEASE\s+([01])')
+          $prerelease = $preMatch.Success -and $preMatch.Groups[1].Value -eq '1'
 
           $json = Get-Content 'Doc\version.json' -Raw | ConvertFrom-Json
           $jsonVersion = ($json.version -join '.')
@@ -40,8 +48,10 @@ jobs:
           }
 
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          Write-Host "Release candidate: StarCap v$version"
+          "public_version=$publicVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "prerelease=$($prerelease.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Release candidate: StarCap $publicVersion ($tag), prerelease=$prerelease"
 
       - name: Check whether release already exists
         id: existing
@@ -122,7 +132,6 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $version = '${{ steps.version.outputs.version }}'
           $exe = 'x64\Release\StarCap.exe'
           if (-not (Test-Path $exe)) { throw 'StarCap.exe was not produced.' }
 
@@ -168,10 +177,9 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = '${{ steps.version.outputs.tag }}'
-          $version = '${{ steps.version.outputs.version }}'
+          $publicVersion = '${{ steps.version.outputs.public_version }}'
+          $isPrerelease = '${{ steps.version.outputs.prerelease }}' -eq 'true'
 
-          # A previous serialized run may have published this version while this
-          # run was waiting/building. Treat that as success, not a failed release.
           gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
             Write-Host "$tag was already published by another run; nothing to do."
@@ -179,12 +187,16 @@ jobs:
           }
           $global:LASTEXITCODE = 0
 
-          gh release create $tag `
-            'release\StarCap.exe' `
-            'release\version.json' `
-            'release\SHA256SUMS.txt' `
-            --repo $env:GITHUB_REPOSITORY `
-            --target $env:GITHUB_SHA `
-            --title "StarCap v$version" `
-            --generate-notes
+          $args = @(
+            'release', 'create', $tag,
+            'release\StarCap.exe',
+            'release\version.json',
+            'release\SHA256SUMS.txt',
+            '--repo', $env:GITHUB_REPOSITORY,
+            '--target', $env:GITHUB_SHA,
+            '--title', "StarCap $publicVersion",
+            '--generate-notes'
+          )
+          if ($isPrerelease) { $args += '--prerelease' }
+          & gh @args
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
