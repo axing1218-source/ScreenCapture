@@ -714,12 +714,12 @@ namespace StarCapOcrV2
 
             for (auto& it : items) {
                 if (it.slot.right <= it.slot.left || it.slot.bottom <= it.slot.top) continue;
-                auto bgColor = sampleBackground(it.block);
-                const float lum = bgColor.r * .299f + bgColor.g * .587f + bgColor.b * .114f;
-                auto textColor = lum > .55f ? D2D1::ColorF(D2D1::ColorF::Black) : D2D1::ColorF(D2D1::ColorF::White);
+                // Keep translated screenshot content visually consistent in both app themes.
+                // The translation layer is image content, not UI: use the same uniform white
+                // surface as direct screenshot translation and always render black text on it.
                 Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bgBrush, textBrush;
-                ctx->CreateSolidColorBrush(bgColor, bgBrush.GetAddressOf());
-                ctx->CreateSolidColorBrush(textColor, textBrush.GetAddressOf());
+                ctx->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), bgBrush.GetAddressOf());
+                ctx->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), textBrush.GetAddressOf());
                 if (!bgBrush || !textBrush) continue;
                 ctx->FillRectangle(it.slot, bgBrush.Get());
 
