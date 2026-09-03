@@ -38,11 +38,9 @@ WinSettingAbout::WinSettingAbout(Ling::WinBase* parent):Ling::Node(parent)
         btn->setColor(aboutText());
         btn->setHoverColor(aboutText());
         if (key == L"version") {
-            btn->setText(STARCAP_DISPLAY_VERSION);
+            btn->setText(STARCAP_PUBLIC_VERSION);
         }
         else if (key == L"project") {
-            // Until the repository is detached/renamed to StarCap, show the
-            // maintainer's GitHub profile instead of exposing the legacy repo name.
             btn->setText(L"github.com/axing1218-source");
             btn->setColor(0x597ef7ff);
             btn->setHoverColor(0x597ef7ff);
