@@ -2,6 +2,7 @@
 
 #include <include/Ling.h>
 #include <robuffer.h>
+#include <dwmapi.h>
 #include <winrt/Windows.Graphics.Imaging.h>
 #include <winrt/Windows.Media.Ocr.h>
 #include <winrt/Windows.Storage.Streams.h>
@@ -29,6 +30,31 @@ namespace StarCapOcrV2
     class OcrResultWindow;
     inline OcrResultWindow* activeWindow{ nullptr };
     inline std::atomic<unsigned long long> requestId{ 0 };
+
+    inline bool darkMode()
+    {
+        auto* setting = Setting::get();
+        return setting && setting->getToolFlag(L"app", L"darkMode", false);
+    }
+
+    // OCR/translation has several independent surfaces, so keep its palette in one
+    // place instead of darkening the entire window. The screenshot pixels themselves
+    // are always rendered unchanged.
+    inline uint32_t uiWindowBg()      { return darkMode() ? 0x1F2023FF : 0xF4F4F4FF; }
+    inline uint32_t uiPanelBg()       { return darkMode() ? 0x202124FF : 0xFFFFFFFF; }
+    inline uint32_t uiCanvasBg()      { return darkMode() ? 0x191A1DFF : 0xF2F2F2FF; }
+    inline uint32_t uiToolbarBg()     { return darkMode() ? 0x25262AFF : 0xFAFAFAFF; }
+    inline uint32_t uiSurface()       { return darkMode() ? 0x2A2C31FF : 0xF3F3F3FF; }
+    inline uint32_t uiSurfaceHover()  { return darkMode() ? 0x35383EFF : 0xE9E9E9FF; }
+    inline uint32_t uiText()          { return darkMode() ? 0xE8EAEDFF : 0x222222FF; }
+    inline uint32_t uiSecondary()     { return darkMode() ? 0xB8BCC5FF : 0x666666FF; }
+    inline uint32_t uiMuted()         { return darkMode() ? 0x90959FFF : 0x999999FF; }
+    inline uint32_t uiBorder()        { return darkMode() ? 0x464950FF : 0xDDDDDDFF; }
+    inline uint32_t uiTextBoxBg()     { return darkMode() ? 0x24262BFF : 0xFAFAFAFF; }
+    inline uint32_t uiLoadingBg()     { return darkMode() ? 0x2D3036FF : 0xE2E2E2CC; }
+    inline uint32_t uiSelectedBg()    { return darkMode() ? 0x303A5CFF : 0xE8F3FFFF; }
+    inline uint32_t uiSelectionBg()   { return darkMode() ? 0x4B67A899 : 0xB8DDF799; }
+    inline uint32_t uiAccent()        { return 0x1677FFFF; }
 
     inline bool copyTextReliable(HWND owner, const std::wstring& text)
     {
@@ -232,7 +258,7 @@ namespace StarCapOcrV2
         {
             translating = false;
             if (!status || !textBox) return;
-            textBox->setBg(0xFAFAFAFF);
+            textBox->setBg(uiTextBoxBg());
             if (!result.ok) {
                 status->setText(result.error.empty() ? L"Gemini 翻译失败。" : result.error);
                 textBox->setText(originalText);
@@ -256,76 +282,92 @@ namespace StarCapOcrV2
     protected:
         void onCreated() override
         {
-            body->setBg(0xF4F4F4FF);
+            if (darkMode()) {
+                BOOL dark = TRUE;
+                // Use the literal to remain compatible with SDKs where the enum name is
+                // unavailable while the Windows 10/11 DWM attribute is still supported.
+                constexpr DWORD immersiveDarkModeAttribute = 20;
+                DwmSetWindowAttribute(hwnd, immersiveDarkModeAttribute, &dark, sizeof(dark));
+            }
+
+            body->setBg(uiWindowBg());
             body->setFlexDirection(Ling::FlexDirection::Row);
 
             auto left = body->makeChild<Ling::Node>();
             left->setFlexGrow(1.f);
             left->setHeightPercent(100.f);
-            left->setBg(0xF2F2F2FF);
+            left->setBg(uiCanvasBg());
             left->setFlexDirection(Ling::FlexDirection::Column);
 
             auto zoomRow = left->makeChild<Ling::Node>();
             zoomRow->setHeight(38.f); zoomRow->setWidthPercent(100.f);
             zoomRow->setPaddingLeft(10.f); zoomRow->setPaddingRight(10.f);
-            zoomRow->setBg(0xFAFAFAFF);
+            zoomRow->setBg(uiToolbarBg());
             zoomRow->setFlexDirection(Ling::FlexDirection::Row);
             zoomRow->setAlignItems(Ling::Align::Center);
 
             zoomFitBtn = zoomRow->makeChild<Ling::Button>();
             zoomFitBtn->setText(L"适合"); zoomFitBtn->setSize(52.f, 26.f); zoomFitBtn->setFontSize(12.f);
-            zoomFitBtn->setBorderRadius(4.f); zoomFitBtn->setBg(0xE8F3FFFF); zoomFitBtn->setColor(0x1677FFFF);
+            zoomFitBtn->setBorderRadius(4.f); zoomFitBtn->setBg(uiSelectedBg()); zoomFitBtn->setColor(uiAccent());
+            zoomFitBtn->setHoverColor(uiAccent()); zoomFitBtn->setHoverBg(uiSelectedBg());
             zoomFitBtn->setMarginRight(6.f);
             zoomFitBtn->onClick.add([this](Ling::Button*) { setFitZoom(); });
 
             zoomActualBtn = zoomRow->makeChild<Ling::Button>();
             zoomActualBtn->setText(L"1:1"); zoomActualBtn->setSize(46.f, 26.f); zoomActualBtn->setFontSize(12.f);
-            zoomActualBtn->setBorderRadius(4.f); zoomActualBtn->setBg(0xF3F3F3FF); zoomActualBtn->setColor(0x444444FF);
+            zoomActualBtn->setBorderRadius(4.f); zoomActualBtn->setBg(uiSurface()); zoomActualBtn->setColor(uiText());
+            zoomActualBtn->setHoverColor(uiText()); zoomActualBtn->setHoverBg(uiSurfaceHover());
             zoomActualBtn->setMarginRight(10.f);
             zoomActualBtn->onClick.add([this](Ling::Button*) { setActualZoom(); });
 
             zoomOutBtn = zoomRow->makeChild<Ling::Button>();
             zoomOutBtn->setText(L"−"); zoomOutBtn->setSize(30.f, 26.f); zoomOutBtn->setFontSize(15.f);
-            zoomOutBtn->setBorderRadius(4.f); zoomOutBtn->setBg(0xF3F3F3FF); zoomOutBtn->setMarginRight(4.f);
+            zoomOutBtn->setBorderRadius(4.f); zoomOutBtn->setBg(uiSurface()); zoomOutBtn->setColor(uiText());
+            zoomOutBtn->setHoverColor(uiText()); zoomOutBtn->setHoverBg(uiSurfaceHover());
+            zoomOutBtn->setMarginRight(4.f);
             zoomOutBtn->onClick.add([this](Ling::Button*) { zoomBy(1.f / 1.25f); });
 
             zoomLabel = zoomRow->makeChild<Ling::Label>();
             zoomLabel->setText(L"适合"); zoomLabel->setWidth(72.f); zoomLabel->setFontSize(12.f);
-            zoomLabel->setColor(0x666666FF);
+            zoomLabel->setColor(uiSecondary());
 
             zoomInBtn = zoomRow->makeChild<Ling::Button>();
             zoomInBtn->setText(L"+"); zoomInBtn->setSize(30.f, 26.f); zoomInBtn->setFontSize(15.f);
-            zoomInBtn->setBorderRadius(4.f); zoomInBtn->setBg(0xF3F3F3FF); zoomInBtn->setMarginLeft(4.f);
+            zoomInBtn->setBorderRadius(4.f); zoomInBtn->setBg(uiSurface()); zoomInBtn->setColor(uiText());
+            zoomInBtn->setHoverColor(uiText()); zoomInBtn->setHoverBg(uiSurfaceHover());
+            zoomInBtn->setMarginLeft(4.f);
             zoomInBtn->onClick.add([this](Ling::Button*) { zoomBy(1.25f); });
 
             auto zoomHint = zoomRow->makeChild<Ling::Label>();
-            zoomHint->setText(L"拖动图片可查看超出区域"); zoomHint->setFontSize(11.f); zoomHint->setColor(0x999999FF);
+            zoomHint->setText(L"拖动图片可查看超出区域"); zoomHint->setFontSize(11.f); zoomHint->setColor(uiMuted());
             zoomHint->setFlexGrow(1.f);
 
             imageCanvas = left->makeChild<Ling::Canvas>();
             imageCanvas->setFlexGrow(1.f);
             imageCanvas->setWidthPercent(100.f);
-            imageCanvas->setBg(0xF2F2F2FF);
+            imageCanvas->setBg(uiCanvasBg());
             auto divider = body->makeChild<Ling::Node>();
-            divider->setWidth(1.f); divider->setHeightPercent(100.f); divider->setBg(0xD9D9D9FF);
+            divider->setWidth(1.f); divider->setHeightPercent(100.f); divider->setBg(uiBorder());
             auto right = body->makeChild<Ling::Node>();
             right->setWidth(430.f); right->setHeightPercent(100.f); right->setPadding(12.f);
-            right->setBg(0xFFFFFFFF); right->setFlexDirection(Ling::FlexDirection::Column);
+            right->setBg(uiPanelBg()); right->setFlexDirection(Ling::FlexDirection::Column);
 
             auto header = right->makeChild<Ling::Node>();
             header->setHeight(38.f); header->setWidthPercent(100.f);
             header->setFlexDirection(Ling::FlexDirection::Row); header->setAlignItems(Ling::Align::Center);
             auto title = header->makeChild<Ling::Label>();
-            title->setText(L"文字识别"); title->setFontSize(16.f); title->setColor(0x222222FF); title->setFlexGrow(1.f);
+            title->setText(L"文字识别"); title->setFontSize(16.f); title->setColor(uiText()); title->setFlexGrow(1.f);
             auto annotate = header->makeChild<Ling::Button>();
             annotate->setText(L"标注图片"); annotate->setSize(76.f, 28.f); annotate->setFontSize(12.f);
-            annotate->setBg(0xF3F3F3FF); annotate->setHoverBg(0xE9E9E9FF);
-            annotate->setBorder(1.f, 0xDDDDDDFF); annotate->setBorderRadius(4.f); annotate->setMarginRight(8.f);
+            annotate->setBg(uiSurface()); annotate->setHoverBg(uiSurfaceHover());
+            annotate->setColor(uiText()); annotate->setHoverColor(uiText());
+            annotate->setBorder(1.f, uiBorder()); annotate->setBorderRadius(4.f); annotate->setMarginRight(8.f);
             annotate->onClick.add([this](Ling::Button*) { openAnnotationEditor(); });
             auto copyAll = header->makeChild<Ling::Button>();
             copyAll->setText(L"复制全部"); copyAll->setSize(76.f, 28.f); copyAll->setFontSize(12.f);
-            copyAll->setBg(0xF3F3F3FF); copyAll->setHoverBg(0xE9E9E9FF);
-            copyAll->setBorder(1.f, 0xDDDDDDFF); copyAll->setBorderRadius(4.f);
+            copyAll->setBg(uiSurface()); copyAll->setHoverBg(uiSurfaceHover());
+            copyAll->setColor(uiText()); copyAll->setHoverColor(uiText());
+            copyAll->setBorder(1.f, uiBorder()); copyAll->setBorderRadius(4.f);
             copyAll->onClick.add([this](Ling::Button*) {
                 const auto& text = showingTranslationText && translationReady ? translatedText : originalText;
                 if (copyTextReliable(hwnd, text)) status->setText(L"已复制当前文字");
@@ -338,28 +380,34 @@ namespace StarCapOcrV2
             originalTab = modeRow->makeChild<Ling::Button>();
             originalTab->setText(L"原文"); originalTab->setSize(58.f, 28.f); originalTab->setFontSize(12.f);
             originalTab->setBorderRadius(4.f); originalTab->setMarginRight(6.f);
+            originalTab->setBg(uiSurface()); originalTab->setColor(uiText());
+            originalTab->setHoverBg(uiSurfaceHover()); originalTab->setHoverColor(uiText());
             originalTab->onClick.add([this](Ling::Button*) { if (translationReady) showMode(false); });
             originalTab->hide();
             translatedTab = modeRow->makeChild<Ling::Button>();
             translatedTab->setText(L"译文"); translatedTab->setSize(58.f, 28.f); translatedTab->setFontSize(12.f);
             translatedTab->setBorderRadius(4.f);
+            translatedTab->setBg(uiSurface()); translatedTab->setColor(uiText());
+            translatedTab->setHoverBg(uiSurfaceHover()); translatedTab->setHoverColor(uiText());
             translatedTab->onClick.add([this](Ling::Button*) { if (translationReady) showMode(true); });
             translatedTab->hide();
             auto spacer = modeRow->makeChild<Ling::Node>(); spacer->setFlexGrow(1.f);
             translateBtn = modeRow->makeChild<Ling::Button>();
             translateBtn->setText(L"翻译"); translateBtn->setSize(78.f, 28.f); translateBtn->setFontSize(12.f);
-            translateBtn->setColor(0xFFFFFFFF); translateBtn->setBg(0x1677FFFF);
-            translateBtn->setHoverBg(0x4096FFFF); translateBtn->setBorderRadius(4.f);
+            translateBtn->setColor(0xFFFFFFFF); translateBtn->setBg(uiAccent());
+            translateBtn->setHoverColor(0xFFFFFFFF); translateBtn->setHoverBg(0x4096FFFF); translateBtn->setBorderRadius(4.f);
             translateBtn->onClick.add([this](Ling::Button*) { startGeminiTranslation(); });
 
             status = right->makeChild<Ling::Label>();
             status->setHeight(30.f); status->setWidthPercent(100.f);
-            status->setText(L"正在识别..."); status->setFontSize(12.f); status->setColor(0x777777FF);
+            status->setText(L"正在识别..."); status->setFontSize(12.f); status->setColor(uiMuted());
             textBox = right->makeChild<Ling::TextBox>();
             textBox->setFlexGrow(1.f); textBox->setWidthPercent(100.f); textBox->setFontSize(14.f);
-            textBox->setPadding(10.f); textBox->setBg(0xFAFAFAFF);
-            textBox->setBorder(1.f, 0xE1E1E1FF); textBox->setBorderRadius(4.f);
-            textBox->setSelectionBgColor(0xB8DDF799); textBox->setPlaceholder(L"正在识别...");
+            textBox->setPadding(10.f); textBox->setBg(uiTextBoxBg());
+            textBox->setBorder(1.f, uiBorder()); textBox->setBorderRadius(4.f);
+            textBox->setColor(uiText()); textBox->setCaretColor(uiText());
+            textBox->setSelectionBgColor(uiSelectionBg()); textBox->setPlaceholderColor(uiMuted());
+            textBox->setPlaceholder(L"正在识别...");
 
             if (imageW > 0 && imageH > 0 && !pixels.empty()) {
                 D2D1_BITMAP_PROPERTIES1 props{};
@@ -381,7 +429,7 @@ namespace StarCapOcrV2
             showTranslatedImage = translated;
             showingTranslationText = translated;
             if (textBox) {
-                textBox->setBg(0xFAFAFAFF);
+                textBox->setBg(uiTextBoxBg());
                 textBox->setText(translated ? translatedText : originalText);
             }
             if (translateBtn) translateBtn->setText(translated ? L"原文" : L"译文");
@@ -396,12 +444,16 @@ namespace StarCapOcrV2
         {
             if (!originalTab || !translatedTab) return;
             if (showingTranslationText) {
-                originalTab->setBg(0xF3F3F3FF); originalTab->setColor(0x444444FF);
-                translatedTab->setBg(0xE8F3FFFF); translatedTab->setColor(0x1677FFFF);
+                originalTab->setBg(uiSurface()); originalTab->setColor(uiText());
+                originalTab->setHoverBg(uiSurfaceHover()); originalTab->setHoverColor(uiText());
+                translatedTab->setBg(uiSelectedBg()); translatedTab->setColor(uiAccent());
+                translatedTab->setHoverBg(uiSelectedBg()); translatedTab->setHoverColor(uiAccent());
             }
             else {
-                originalTab->setBg(0xE8F3FFFF); originalTab->setColor(0x1677FFFF);
-                translatedTab->setBg(0xF3F3F3FF); translatedTab->setColor(0x444444FF);
+                originalTab->setBg(uiSelectedBg()); originalTab->setColor(uiAccent());
+                originalTab->setHoverBg(uiSelectedBg()); originalTab->setHoverColor(uiAccent());
+                translatedTab->setBg(uiSurface()); translatedTab->setColor(uiText());
+                translatedTab->setHoverBg(uiSurfaceHover()); translatedTab->setHoverColor(uiText());
             }
         }
 
@@ -422,13 +474,17 @@ namespace StarCapOcrV2
         void updateZoomButtons()
         {
             if (zoomFitBtn) {
-                zoomFitBtn->setBg(imageFitMode ? 0xE8F3FFFF : 0xF3F3F3FF);
-                zoomFitBtn->setColor(imageFitMode ? 0x1677FFFF : 0x444444FF);
+                zoomFitBtn->setBg(imageFitMode ? uiSelectedBg() : uiSurface());
+                zoomFitBtn->setColor(imageFitMode ? uiAccent() : uiText());
+                zoomFitBtn->setHoverBg(imageFitMode ? uiSelectedBg() : uiSurfaceHover());
+                zoomFitBtn->setHoverColor(imageFitMode ? uiAccent() : uiText());
             }
             if (zoomActualBtn) {
                 const bool actual = !imageFitMode && fabsf(imageManualScale - 1.f) < .001f;
-                zoomActualBtn->setBg(actual ? 0xE8F3FFFF : 0xF3F3F3FF);
-                zoomActualBtn->setColor(actual ? 0x1677FFFF : 0x444444FF);
+                zoomActualBtn->setBg(actual ? uiSelectedBg() : uiSurface());
+                zoomActualBtn->setColor(actual ? uiAccent() : uiText());
+                zoomActualBtn->setHoverBg(actual ? uiSelectedBg() : uiSurfaceHover());
+                zoomActualBtn->setHoverColor(actual ? uiAccent() : uiText());
             }
         }
 
@@ -686,7 +742,7 @@ namespace StarCapOcrV2
         {
             if (!imageCanvas) return;
             auto ctx = imageCanvas->startPaint(); if (!ctx) return;
-            ctx->Clear(D2D1::ColorF(0xF2F2F2));
+            ctx->Clear(D2D1::ColorF(darkMode() ? 0x191A1D : 0xF2F2F2));
             if (imageBitmap && imageW > 0 && imageH > 0) {
                 float cw = imageCanvas->w, ch = imageCanvas->h;
                 float scale = getImageScale();
@@ -695,6 +751,8 @@ namespace StarCapOcrV2
                 float left = (cw - dw) * .5f + imageOffsetX;
                 float top = (ch - dh) * .5f + imageOffsetY;
                 auto dest = D2D1::RectF(left, top, left + dw, top + dh);
+                // Only the canvas surrounding the screenshot changes with the theme.
+                // The bitmap and translated bitmap are intentionally never tinted/dimmed.
                 ctx->DrawBitmap(imageBitmap.Get(), dest, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
                 if (translating) {
                     Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> overlayBrush, loadingTextBrush;
@@ -762,7 +820,7 @@ namespace StarCapOcrV2
             translating = true;
             if (translateBtn) translateBtn->setText(L"翻译中...");
             if (textBox) {
-                textBox->setBg(0xE2E2E2CC);
+                textBox->setBg(uiLoadingBg());
                 textBox->setText(L"正在翻译中...");
             }
             refresh();
