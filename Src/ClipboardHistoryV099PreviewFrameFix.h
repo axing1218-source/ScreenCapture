@@ -1,9 +1,8 @@
 #pragma once
 
 // Unified floating-frame treatment for clipboard preview windows.
-// Preview windows intentionally keep a subtle 1px outline so they remain visually
-// separated from the clipboard window behind them. The outline is theme-aware:
-// dark mode uses a muted blue-gray and light mode uses a soft gray-blue.
+// The OS/DWM is not allowed to paint the outline: hide/show cycles can otherwise
+// recreate a bright native non-client border. StarCap owns the 1px outline entirely.
 namespace ClipboardHistoryV099PreviewFrameFix
 {
     inline WNDPROC fullBaseProc{ nullptr };
@@ -13,17 +12,18 @@ namespace ClipboardHistoryV099PreviewFrameFix
     inline COLORREF floatingBorderColor()
     {
         return ClipboardHistory::v099DarkMode()
-            ? RGB(68, 76, 96)       // #444C60: subdued blue-gray on dark surfaces
-            : RGB(205, 210, 220);   // #CDD2DC: soft gray-blue on light surfaces
+            ? RGB(68, 76, 96)       // #444C60
+            : RGB(205, 210, 220);   // #CDD2DC
     }
 
-    inline void applyDwmBorder(HWND hwnd)
+    inline void disableDwmBorder(HWND hwnd)
     {
         if (!hwnd) return;
         if (auto fn = ClipboardHistoryWindowShim::dwmSetWindowAttribute()) {
             constexpr DWORD DWMWA_BORDER_COLOR_ = 34;
-            const COLORREF color = floatingBorderColor();
-            fn(hwnd, DWMWA_BORDER_COLOR_, &color, sizeof(color));
+            constexpr COLORREF DWMWA_COLOR_NONE_ = 0xFFFFFFFEu;
+            const COLORREF none = DWMWA_COLOR_NONE_;
+            fn(hwnd, DWMWA_BORDER_COLOR_, &none, sizeof(none));
         }
     }
 
@@ -32,7 +32,7 @@ namespace ClipboardHistoryV099PreviewFrameFix
         if (!hwnd || !IsWindow(hwnd)) return;
         LONG_PTR style = GetWindowLongPtrW(hwnd, GWL_STYLE);
         const LONG_PTR remove = WS_THICKFRAME | WS_BORDER | WS_DLGFRAME | WS_CAPTION;
-        LONG_PTR wanted = (style & ~remove) | WS_POPUP | WS_CLIPCHILDREN | WS_SYSMENU;
+        const LONG_PTR wanted = (style & ~remove) | WS_POPUP | WS_CLIPCHILDREN | WS_SYSMENU;
         if (wanted != style) {
             SetWindowLongPtrW(hwnd, GWL_STYLE, wanted);
             SetWindowPos(hwnd, nullptr, 0, 0, 0, 0,
@@ -40,29 +40,26 @@ namespace ClipboardHistoryV099PreviewFrameFix
                 SWP_FRAMECHANGED | SWP_NOCOPYBITS);
         }
         SetWindowRgn(hwnd, nullptr, FALSE);
-        applyDwmBorder(hwnd);
+        disableDwmBorder(hwnd);
     }
 
     inline void paintFloatingBorder(HWND hwnd)
     {
-        if (!hwnd || !IsWindow(hwnd)) return;
-        HDC dc = GetWindowDC(hwnd);
+        if (!hwnd || !IsWindow(hwnd) || !IsWindowVisible(hwnd)) return;
+        HDC dc = GetDC(hwnd);
         if (!dc) return;
 
-        RECT wr{};
-        GetWindowRect(hwnd, &wr);
-        const int w = std::max(1L, wr.right - wr.left);
-        const int h = std::max(1L, wr.bottom - wr.top);
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        const int w = std::max(1L, rc.right - rc.left);
+        const int h = std::max(1L, rc.bottom - rc.top);
         const COLORREF color = floatingBorderColor();
 
         HPEN pen = CreatePen(PS_SOLID, 1, color);
         HGDIOBJ oldPen = pen ? SelectObject(dc, pen) : nullptr;
-
-        MoveToEx(dc, 0, 0, nullptr);       LineTo(dc, w - 1, 0);
-        MoveToEx(dc, 0, 0, nullptr);       LineTo(dc, 0, h - 1);
-        MoveToEx(dc, w - 1, 0, nullptr);   LineTo(dc, w - 1, h - 1);
-        MoveToEx(dc, 0, h - 1, nullptr);   LineTo(dc, w - 1, h - 1);
-
+        HGDIOBJ oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
+        Rectangle(dc, 0, 0, w, h);
+        if (oldBrush) SelectObject(dc, oldBrush);
         if (oldPen) SelectObject(dc, oldPen);
         if (pen) DeleteObject(pen);
         ReleaseDC(hwnd, dc);
@@ -76,15 +73,28 @@ namespace ClipboardHistoryV099PreviewFrameFix
             IsWindow(ClipboardHistoryWindowShim::previewEdit)) {
             InvalidateRect(ClipboardHistoryWindowShim::previewEdit, nullptr, TRUE);
         }
-        InvalidateRect(hwnd, nullptr, FALSE);
+        RedrawWindow(hwnd, nullptr, nullptr,
+            RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+        paintFloatingBorder(hwnd);
+    }
+
+    inline bool isFrameResetMessage(UINT msg)
+    {
+        return msg == WM_STYLECHANGED || msg == WM_THEMECHANGED ||
+            msg == WM_DWMCOMPOSITIONCHANGED || msg == WM_DISPLAYCHANGE ||
+            msg == WM_SETTINGCHANGE;
     }
 
     inline LRESULT CALLBACK fullProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
-        // Do not forward these messages to the older previewFrameProc. That proc
-        // calls applyNativeFrame() with the legacy light border.
         switch (msg) {
         case WM_NCCALCSIZE:
+            return 0;
+
+        case WM_NCPAINT:
+            // Never let DefWindowProc / the legacy preview proc paint a native frame.
+            stripNativeFrame(hwnd);
+            paintFloatingBorder(hwnd);
             return 0;
 
         case WM_NCACTIVATE:
@@ -97,8 +107,7 @@ namespace ClipboardHistoryV099PreviewFrameFix
                 stripNativeFrame(hwnd);
                 ClipboardHistoryWindowShim::syncPreviewContent(hwnd);
                 refreshFullPreview(hwnd);
-            }
-            else {
+            } else {
                 stripNativeFrame(hwnd);
             }
             return 0;
@@ -122,6 +131,7 @@ namespace ClipboardHistoryV099PreviewFrameFix
             LRESULT result = fullBaseProc
                 ? CallWindowProcW(fullBaseProc, hwnd, msg, wParam, lParam)
                 : DefWindowProcW(hwnd, msg, wParam, lParam);
+            stripNativeFrame(hwnd);
             paintFloatingBorder(hwnd);
             return result;
         }
@@ -131,7 +141,8 @@ namespace ClipboardHistoryV099PreviewFrameFix
             ? CallWindowProcW(fullBaseProc, hwnd, msg, wParam, lParam)
             : DefWindowProcW(hwnd, msg, wParam, lParam);
 
-        if (msg == WM_ACTIVATE || msg == WM_WINDOWPOSCHANGED || msg == WM_SETFOCUS) {
+        if (msg == WM_ACTIVATE || msg == WM_WINDOWPOSCHANGED || msg == WM_SETFOCUS ||
+            isFrameResetMessage(msg)) {
             stripNativeFrame(hwnd);
             paintFloatingBorder(hwnd);
         }
@@ -141,6 +152,16 @@ namespace ClipboardHistoryV099PreviewFrameFix
     inline LRESULT CALLBACK fileProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
         if (msg == WM_NCCALCSIZE) return 0;
+        if (msg == WM_NCPAINT) {
+            stripNativeFrame(hwnd);
+            paintFloatingBorder(hwnd);
+            return 0;
+        }
+        if (msg == WM_NCACTIVATE) {
+            stripNativeFrame(hwnd);
+            paintFloatingBorder(hwnd);
+            return TRUE;
+        }
         if (msg == WM_NCHITTEST) {
             POINT p{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             ScreenToClient(hwnd, &p);
@@ -154,6 +175,7 @@ namespace ClipboardHistoryV099PreviewFrameFix
             LRESULT result = fileBaseProc
                 ? CallWindowProcW(fileBaseProc, hwnd, msg, wParam, lParam)
                 : DefWindowProcW(hwnd, msg, wParam, lParam);
+            stripNativeFrame(hwnd);
             paintFloatingBorder(hwnd);
             return result;
         }
@@ -162,8 +184,8 @@ namespace ClipboardHistoryV099PreviewFrameFix
             ? CallWindowProcW(fileBaseProc, hwnd, msg, wParam, lParam)
             : DefWindowProcW(hwnd, msg, wParam, lParam);
 
-        if (msg == WM_SHOWWINDOW || msg == WM_NCACTIVATE || msg == WM_ACTIVATE ||
-            msg == WM_SIZE || msg == WM_WINDOWPOSCHANGED || msg == WM_SETFOCUS) {
+        if (msg == WM_SHOWWINDOW || msg == WM_ACTIVATE || msg == WM_SIZE ||
+            msg == WM_WINDOWPOSCHANGED || msg == WM_SETFOCUS || isFrameResetMessage(msg)) {
             stripNativeFrame(hwnd);
             paintFloatingBorder(hwnd);
         }
