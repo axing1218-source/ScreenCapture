@@ -20,3 +20,4 @@
 #include "ClipboardHistoryV099Utools_part7.inc"
 #include "ClipboardHistoryV099Utools_part8.inc"
 #include "ClipboardHistoryV099Utools_part9.inc"
+#include "ClipboardHistoryV099Polish.h"
