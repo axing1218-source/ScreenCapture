@@ -3,8 +3,9 @@
 #include "Setting.h"
 #include "ClipboardHistoryV099Enhance.h"
 
-// part1 owns the original light palette. Keep it available under legacy names,
-// then expose a dynamic app-level palette to all later v0.9.9 source parts.
+// part1 and part2 are one physical source unit split in the middle of the
+// embedded logo bitmap. Keep them contiguous while renaming the original light
+// palette, then expose the dynamic app palette before the remaining UI parts.
 #define v099Canvas v099CanvasLight
 #define v099Card v099CardLight
 #define v099Surface v099SurfaceLight
@@ -19,6 +20,7 @@
 #define v099SyncBrushes v099SyncBrushesLight
 #define v099ApplyRoundRegion v099ApplyRoundRegionLight
 #include "ClipboardHistoryV099Utools_part1.inc"
+#include "ClipboardHistoryV099Utools_part2.inc"
 #undef v099Canvas
 #undef v099Card
 #undef v099Surface
@@ -91,8 +93,6 @@ namespace ClipboardHistory
                 RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
     }
 }
-
-#include "ClipboardHistoryV099Utools_part2.inc"
 
 // The v0.9.9 source is split in the middle of several function bodies. Rename
 // the legacy bitmap logo at preprocessing time, then route only the later call
