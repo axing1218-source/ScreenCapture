@@ -2,9 +2,24 @@
 #include "../Win/WinPin.h"
 #include "../History.h"
 #include "../Lang.h"
+#include "../Setting.h"
 #include "../Tip.h"
 #include "ToolMain.h"
 #include "ToolSub.h"
+
+namespace {
+	bool toolDarkMode()
+	{
+		auto* setting = Setting::get();
+		return setting && setting->getToolFlag(L"app", L"darkMode", false);
+	}
+	uint32_t toolBg() { return toolDarkMode() ? 0x25262AFF : 0xFFFFFFFF; }
+	uint32_t toolBorder() { return toolDarkMode() ? 0x4A4C52FF : 0xA8A8A8FF; }
+	uint32_t toolText() { return toolDarkMode() ? 0xE8EAEDFF : 0x000000FF; }
+	uint32_t toolHover() { return toolDarkMode() ? 0x36383DFF : 0xF2F2F2FF; }
+	uint32_t toolSelected() { return toolDarkMode() ? 0x30364EFF : 0xE6F4FFFF; }
+	uint32_t toolSplitter() { return toolDarkMode() ? 0x4A4C52FF : 0xDDDDDDFF; }
+}
 
 ToolMain::ToolMain(WinPin* win) : Ling::WinBase(), win(win)
 {
@@ -75,8 +90,9 @@ float ToolMain::getBtnCenterX()
 void ToolMain::onCreated()
 {
 	tip = std::make_unique<Tip>(this);
-	body->setBg(0xFFFFFFFF);
-	body->setBorder(1.f, 0xA8A8A8ff);
+	body->setBg(toolBg());
+	body->setBorder(1.f, toolBorder());
+	body->setColor(toolText());
 	body->setAlignItems(Ling::Align::Center);
 	body->setFlexDirection(Ling::FlexDirection::Row);
 	for (size_t i = 0; i < btnIds.size(); i++)
@@ -85,7 +101,7 @@ void ToolMain::onCreated()
 		if (id == L"|") {
 			auto spliter = body->makeChild<Ling::Node>();
 			spliter->setSize(dpi, 18.f);
-			spliter->setBg(0xDDDDDDff);
+			spliter->setBg(toolSplitter());
 		}
 		else {
 			auto btn = body->makeChild<Ling::Button>();
@@ -93,7 +109,9 @@ void ToolMain::onCreated()
 			btn->setText(btnCodes[i]);
 			btn->setHeightPercent(100.f);
 			btn->setFlexGrow(1.f);
-			btn->setHoverBg(0xF2F2F2ff);
+			btn->setColor(toolText());
+			btn->setHoverColor(toolText());
+			btn->setHoverBg(toolHover());
 			btn->setFontFamily(L"icon");
 			btn->setFontSize(13.f);
 			btn->onClick.add([this](Ling::Button* btn) {onClick(btn);});
@@ -107,7 +125,9 @@ void ToolMain::onCreated()
 void ToolMain::applyNormalStyle(Ling::Button* btn)
 {
 	btn->setBg(0);
-	btn->setHoverBg(0xF2F2F2ff);
+	btn->setColor(toolText());
+	btn->setHoverColor(toolText());
+	btn->setHoverBg(toolHover());
 }
 
 // 取消选中：与 onClick 选中某个按钮是对称操作，只是没有新的选中项。
@@ -167,8 +187,10 @@ void ToolMain::onClick(Ling::Button* btn)
 		}
 		if (b->id == btn->id)
 		{
-			b->setBg(0xe6f4ffff);
-			b->setHoverBg(0xe6f4ffff);
+			b->setBg(toolSelected());
+			b->setHoverBg(toolSelected());
+			b->setColor(toolText());
+			b->setHoverColor(toolText());
 		}
 	}
 	curId = btn->id;
