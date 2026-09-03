@@ -28,7 +28,10 @@ namespace {
 	void applyContentTheme(Ling::Node* node)
 	{
 		if (!node) return;
-		node->setBg(pageBg());
+		// The body already owns the page background. Keep the page container
+		// transparent so a page recreated during a live theme switch cannot paint
+		// over the absolute close button that was created earlier in the sibling list.
+		node->setBg(0x00000000);
 	}
 }
 
@@ -259,4 +262,3 @@ LRESULT WinSetting::onHitTest(const POINT pos)
 	}
 	return HTCLIENT;
 }
-
