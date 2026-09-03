@@ -36,6 +36,9 @@ namespace ClipboardHistoryV099PointerFix
         SendMessageW(hwnd, LB_SETTOPINDEX, top, 0);
         SendMessageW(hwnd, WM_SETREDRAW, TRUE, 0);
 
+        // One repaint per state change is enough. The row itself is now rendered
+        // through an off-screen buffer, so the image/text/meta block appears in a
+        // single frame rather than exposing intermediate GDI drawing operations.
         if (old != idx) invalidateItem(hwnd, old);
         invalidateItem(hwnd, idx);
     }
@@ -73,7 +76,7 @@ namespace ClipboardHistoryV099PointerFix
                 return 0;
             }
 
-            SetFocus(hwnd);
+            if (GetFocus() != hwnd) SetFocus(hwnd);
             ReleaseCapture();
             rowPress = true;
             pressedIndex = idx;
@@ -139,7 +142,10 @@ namespace ClipboardHistoryV099PointerFix
                 if (ClipboardHistoryLegacy::searchWnd)
                     ShowWindow(ClipboardHistoryLegacy::searchWnd, SW_SHOW);
             }
-            invalidateItem(hwnd, idx);
+
+            // Selection was already painted once on mouse-down. Do not invalidate
+            // the same image row again on mouse-up; that second full row repaint was
+            // the remaining visible "jump" after pointer capture was fixed.
             return 0;
         }
 
