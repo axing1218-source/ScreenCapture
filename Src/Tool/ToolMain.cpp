@@ -92,7 +92,6 @@ void ToolMain::onCreated()
 	tip = std::make_unique<Tip>(this);
 	body->setBg(toolBg());
 	body->setBorder(1.f, toolBorder());
-	body->setColor(toolText());
 	body->setAlignItems(Ling::Align::Center);
 	body->setFlexDirection(Ling::FlexDirection::Row);
 	for (size_t i = 0; i < btnIds.size(); i++)
