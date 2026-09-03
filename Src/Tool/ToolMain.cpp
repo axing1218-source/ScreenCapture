@@ -8,6 +8,8 @@
 #include "ToolSub.h"
 
 namespace {
+	std::wstring queuedInitialTool;
+
 	bool toolDarkMode()
 	{
 		auto* setting = Setting::get();
@@ -32,6 +34,14 @@ ToolMain::ToolMain(WinPin* win) : Ling::WinBase(), win(win)
 	// 点按钮会把 ToolMain 激活，此后键盘消息进的是它而不是 WinPin。
 	// 直接把按键转触给 WinPin 的同名事件，快捷键在两个窗口上表现一致。
 	onKeyDown.add([this](UINT key) { this->win->onKeyDown(key); });
+	// Direct annotation buttons on ToolCap queue one tool before WinPin exists.
+	// Apply it on the first timer tick: by then WinPin's constructor has also built
+	// ToolSub, so the normal onClick path can safely open the matching sub-toolbar.
+	onTimer.add([this](UINT id) {
+		if (id != initialToolTimerId) return;
+		KillTimer(hwnd, initialToolTimerId);
+		applyQueuedInitialTool();
+	});
 	// DPI 变了（工具条被挪到缩放比例不同的显示器上，或者用户改了系统缩放）：
 	// Ling 只会把窗口按系统给的建议矩形整体缩放一遍，我们自己定的那套摆放规则不会重跑，
 	// 工具条就歪在别处了。位置也不能在 onDpiChanged 里直接改 —— 那个事件在 Ling 应用建议矩形
@@ -62,6 +72,11 @@ ToolMain::~ToolMain()
 
 void ToolMain::init()
 {
+}
+
+void ToolMain::queueInitialTool(const std::wstring& id)
+{
+	queuedInitialTool = id;
 }
 
 // 返回 curId 对应按钮的中心相对 ToolMain 左边的偏移（物理像素）。
@@ -119,6 +134,21 @@ void ToolMain::onCreated()
 		}
 	}
 	show();
+	if (!queuedInitialTool.empty())
+		SetTimer(hwnd, initialToolTimerId, 1, nullptr);
+}
+
+void ToolMain::applyQueuedInitialTool()
+{
+	if (queuedInitialTool.empty()) return;
+	const auto id = queuedInitialTool;
+	queuedInitialTool.clear();
+	for (auto* btn : btns) {
+		if (btn && btn->id == id) {
+			onClick(btn);
+			return;
+		}
+	}
 }
 
 void ToolMain::applyNormalStyle(Ling::Button* btn)
