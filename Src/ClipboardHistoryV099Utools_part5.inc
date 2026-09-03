@@ -46,7 +46,8 @@
         bool oversized = false;
         if (item.type == ItemType::Image) {
             RECT preview{ panel.left + 20, panel.top + 12, panel.left + 268, panel.top + 103 };
-            fillRoundRect(dis->hDC, preview, RGB(250, 250, 250), 5);
+            fillRoundRect(dis->hDC, preview,
+                v099DarkMode() ? RGB(31, 38, 51) : RGB(250, 250, 250), 5);
             strokeRoundRect(dis->hDC, preview, v099Border(), 1, 5);
             RECT imageRc = preview; InflateRect(&imageRc, -7, -7);
             drawDibFit(dis->hDC, item, imageRc);
