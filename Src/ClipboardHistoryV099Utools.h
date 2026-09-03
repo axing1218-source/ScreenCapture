@@ -80,3 +80,4 @@ namespace ClipboardHistory
 #include "ClipboardHistoryV099FilePreviewFix.h"
 #include "ClipboardHistoryV099DarkPreviewFix.h"
 #include "ClipboardHistoryV099PreviewFrameFix.h"
+#include "ClipboardHistoryV099DirectPreview.h"
