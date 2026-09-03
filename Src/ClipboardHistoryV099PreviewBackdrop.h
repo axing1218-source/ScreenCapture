@@ -4,7 +4,7 @@
 //
 // Text/image/file previews are intentionally clean WS_POPUP windows. To make them
 // read as a foreground layer (especially when both surfaces are white in light
-// mode), dim only the clipboard window behind them with a very light black overlay.
+// mode), dim only the clipboard window behind them with a restrained black overlay.
 // The preview itself stays at full brightness and the existing 1px themed outline
 // remains unchanged. No DWM/frame manipulation is involved here.
 namespace ClipboardHistoryV099PreviewBackdrop
@@ -13,7 +13,13 @@ namespace ClipboardHistoryV099PreviewBackdrop
     inline HWND activePreview{ nullptr };
     inline HWINEVENTHOOK eventHook{ nullptr };
 
-    static constexpr BYTE OVERLAY_ALPHA = 26; // about 10% black
+    inline BYTE overlayAlpha()
+    {
+        // Light mode needs more separation because both the clipboard and preview
+        // are predominantly white. Dark mode already has natural contrast, so keep
+        // the dimming a little softer there.
+        return ClipboardHistory::v099DarkMode() ? (BYTE)40 : (BYTE)52;
+    }
 
     inline bool isPreviewWindow(HWND hwnd)
     {
@@ -85,7 +91,7 @@ namespace ClipboardHistoryV099PreviewBackdrop
             0, 0, std::max(1L, rc.right), std::max(1L, rc.bottom),
             parent, nullptr, GetModuleHandleW(nullptr), nullptr);
         if (overlay)
-            SetLayeredWindowAttributes(overlay, 0, OVERLAY_ALPHA, LWA_ALPHA);
+            SetLayeredWindowAttributes(overlay, 0, overlayAlpha(), LWA_ALPHA);
     }
 
     inline void showFor(HWND preview)
@@ -100,7 +106,7 @@ namespace ClipboardHistoryV099PreviewBackdrop
         SetWindowPos(overlay, HWND_TOP, 0, 0,
             std::max(1L, rc.right), std::max(1L, rc.bottom),
             SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        SetLayeredWindowAttributes(overlay, 0, OVERLAY_ALPHA, LWA_ALPHA);
+        SetLayeredWindowAttributes(overlay, 0, overlayAlpha(), LWA_ALPHA);
         InvalidateRect(overlay, nullptr, TRUE);
     }
 
