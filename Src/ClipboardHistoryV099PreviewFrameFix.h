@@ -40,10 +40,47 @@ namespace ClipboardHistoryV099PreviewFrameFix
         disableDwmBorder(hwnd);
     }
 
+    inline void refreshFullPreview(HWND hwnd)
+    {
+        stripNativeFrame(hwnd);
+        ClipboardHistoryWindowShim::layoutPreviewEdit(hwnd);
+        if (ClipboardHistoryWindowShim::previewEdit &&
+            IsWindow(ClipboardHistoryWindowShim::previewEdit)) {
+            InvalidateRect(ClipboardHistoryWindowShim::previewEdit, nullptr, TRUE);
+        }
+        InvalidateRect(hwnd, nullptr, FALSE);
+    }
+
     inline LRESULT CALLBACK fullProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
-        if (msg == WM_NCCALCSIZE) return 0;
-        if (msg == WM_NCHITTEST) {
+        // Do not forward these messages to the older previewFrameProc. That proc
+        // calls applyNativeFrame() with the light default border, which can make
+        // DWM recreate a bright outline after the hidden preview is shown again.
+        switch (msg) {
+        case WM_NCCALCSIZE:
+            return 0;
+
+        case WM_NCACTIVATE:
+            stripNativeFrame(hwnd);
+            return TRUE;
+
+        case WM_SHOWWINDOW:
+            if (wParam) {
+                stripNativeFrame(hwnd);
+                ClipboardHistoryWindowShim::syncPreviewContent(hwnd);
+                refreshFullPreview(hwnd);
+            }
+            else {
+                stripNativeFrame(hwnd);
+            }
+            return 0;
+
+        case WM_SIZE:
+            refreshFullPreview(hwnd);
+            return 0;
+
+        case WM_NCHITTEST:
+        {
             POINT p{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
             ScreenToClient(hwnd, &p);
             RECT rc{}; GetClientRect(hwnd, &rc);
@@ -53,13 +90,15 @@ namespace ClipboardHistoryV099PreviewFrameFix
                 return HTCAPTION;
             return HTCLIENT;
         }
+        }
 
         LRESULT result = fullBaseProc
             ? CallWindowProcW(fullBaseProc, hwnd, msg, wParam, lParam)
             : DefWindowProcW(hwnd, msg, wParam, lParam);
 
-        if (msg == WM_SHOWWINDOW || msg == WM_NCACTIVATE || msg == WM_ACTIVATE ||
-            msg == WM_SIZE || msg == WM_WINDOWPOSCHANGED) {
+        // Messages not handled by the legacy preview-frame layer are safe to
+        // forward. Reassert the frameless state afterwards for DWM transitions.
+        if (msg == WM_ACTIVATE || msg == WM_WINDOWPOSCHANGED || msg == WM_SETFOCUS) {
             stripNativeFrame(hwnd);
         }
         return result;
