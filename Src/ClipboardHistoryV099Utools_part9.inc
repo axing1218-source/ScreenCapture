@@ -8,11 +8,8 @@
             HDC dc = BeginPaint(hwnd, &ps);
             RECT rc{}; GetClientRect(hwnd, &rc);
             v099DrawHeader(dc, rc);
-            // Draw the outline one pixel inside the rounded window region. Drawing on
-            // the exact outer edge gets clipped by SetWindowRgn at the two top arcs,
-            // which is why the upper-left and upper-right border looked incomplete.
-            RECT frame{ 1, 1, std::max(2, (int)rc.right - 2), std::max(2, (int)rc.bottom - 2) };
-            strokeRoundRect(dc, frame, v099Border(), 1, 9);
+            // The outer frame is now drawn by DWM. Do not draw a second GDI RoundRect:
+            // the duplicate pixel-snapped outline was the visible gray/jagged border.
             EndPaint(hwnd, &ps);
             return 0;
         }
