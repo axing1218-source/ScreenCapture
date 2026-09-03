@@ -23,16 +23,14 @@ namespace {
 
     std::wstring shortcutDefault(const std::wstring& type)
     {
-        if (type == L"cap") return L"Ctrl+Alt+A";
-        // Do not take Win+V from the Windows clipboard and do not take
-        // Ctrl+Shift+V from applications that use it for plain-text paste.
-        if (type == L"clipboard") return L"Ctrl+Alt+V";
+        if (type == L"cap") return L"F3";
+        if (type == L"clipboard") return L"F4";
         return L"";
     }
 
-    // 配置文件的默认内容。旧版 config.json 没有 clipboard 键时，getShortcutKey
-    // 仍会回落到 Ctrl+Alt+V，因此升级不会要求用户删配置重来。
-    constexpr std::wstring_view defaultConfig{ LR"""({"common":{"autoStart":false,"language":"zh-CN"},"shortcutKey":{"cap":"Ctrl+Alt+A","clipboard":"Ctrl+Alt+V"},"gemini":{"model":"gemini-3.5-flash-lite"}})""" };
+    // Fresh-install defaults for the public beta. Explicit values already saved
+    // in an existing config.json continue to win over these defaults.
+    constexpr std::wstring_view defaultConfig{ LR"""({"common":{"autoStart":true,"language":"zh-CN"},"shortcutKey":{"cap":"F3","clipboard":"F4"},"toolPin":{"capture":{"borderWidth":0}},"gemini":{"model":"gemini-3.5-flash-lite"}})""" };
 
     std::wstring protectText(const std::wstring& value)
     {
@@ -397,6 +395,5 @@ void Setting::initShortcutKeys()
         WinCap::init();
     });
 }
-
 
 
