@@ -4,7 +4,17 @@
 #include "../Tip.h"
 #include "../StarCapOcr.h"
 #include "../StarCapCaptureTranslate.h"
+#include "ToolMain.h"
 #include "ToolCap.h"
+
+namespace
+{
+	bool isAnnotationTool(const std::wstring& id)
+	{
+		return id == L"rect" || id == L"ellipse" || id == L"arrow" || id == L"number" ||
+			id == L"line" || id == L"text" || id == L"mosaic" || id == L"eraser";
+	}
+}
 
 ToolCap::ToolCap(WinCap* win) : Ling::WinBase(), win(win)
 {
@@ -74,7 +84,13 @@ void ToolCap::onCreated()
 void ToolCap::onClick(Ling::Button* btn)
 {
 	tip->hide();
-	if (btn->id == L"mark") win->startPin();
+	if (isAnnotationTool(btn->id)) {
+		// WinPin owns the actual annotation engine. Queue the desired tool before
+		// switching windows so the matching ToolMain button is selected as soon as
+		// the annotation window is ready. The user therefore needs only this click.
+		ToolMain::queueInitialTool(btn->id);
+		win->startPin();
+	}
 	else if (btn->id == L"long") win->startLong();
 	else if (btn->id == L"video") win->startVideo();
 	else if (btn->id == L"ocr") StarCapOcr::show(win);
