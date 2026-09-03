@@ -28,17 +28,23 @@ namespace ClipboardHistory
 
     inline LRESULT CALLBACK historyProc(HWND, UINT, WPARAM, LPARAM);
 
-    inline COLORREF v099Canvas()      { return RGB(254, 254, 254); }
-    inline COLORREF v099Card()        { return RGB(255, 255, 255); }
-    inline COLORREF v099Surface()     { return RGB(244, 244, 244); }
-    inline COLORREF v099Border()      { return RGB(229, 231, 235); }
-    inline COLORREF v099Text()        { return RGB(32, 33, 36); }
-    inline COLORREF v099Muted()       { return RGB(112, 117, 124); }
-    inline COLORREF v099Faint()       { return RGB(154, 160, 166); }
+    inline bool v099DarkMode()
+    {
+        auto* setting = Setting::get();
+        return setting && setting->getToolFlag(L"app", L"darkMode", false);
+    }
+
+    inline COLORREF v099Canvas()      { return v099DarkMode() ? RGB(30, 31, 34) : RGB(254, 254, 254); }
+    inline COLORREF v099Card()        { return v099DarkMode() ? RGB(37, 38, 42) : RGB(255, 255, 255); }
+    inline COLORREF v099Surface()     { return v099DarkMode() ? RGB(43, 44, 48) : RGB(244, 244, 244); }
+    inline COLORREF v099Border()      { return v099DarkMode() ? RGB(62, 64, 69) : RGB(229, 231, 235); }
+    inline COLORREF v099Text()        { return v099DarkMode() ? RGB(232, 234, 237) : RGB(32, 33, 36); }
+    inline COLORREF v099Muted()       { return v099DarkMode() ? RGB(174, 178, 185) : RGB(112, 117, 124); }
+    inline COLORREF v099Faint()       { return v099DarkMode() ? RGB(137, 141, 148) : RGB(154, 160, 166); }
     inline COLORREF v099Primary()     { return RGB(88, 112, 255); }
-    inline COLORREF v099PrimarySoft() { return RGB(240, 243, 255); }
-    inline COLORREF v099Hover()       { return RGB(249, 250, 252); }
-    inline COLORREF v099SelectedBg()  { return RGB(255, 255, 255); }
+    inline COLORREF v099PrimarySoft() { return v099DarkMode() ? RGB(47, 52, 76) : RGB(240, 243, 255); }
+    inline COLORREF v099Hover()       { return v099DarkMode() ? RGB(42, 43, 47) : RGB(249, 250, 252); }
+    inline COLORREF v099SelectedBg()  { return v099DarkMode() ? RGB(35, 37, 44) : RGB(255, 255, 255); }
 
     inline void v099SyncBrushes()
     {
@@ -75,9 +81,6 @@ namespace ClipboardHistory
 
     inline void v099ApplyRoundRegion(HWND hwnd)
     {
-        // Keep the existing call sites, but use DWM's compositor instead of a GDI
-        // window region. This gives smooth native corners and prevents stale gray
-        // resize-frame artifacts after returning from the full preview.
         ClipboardHistoryWindowShim::applyNativeFrame(hwnd, v099Border());
     }
 
