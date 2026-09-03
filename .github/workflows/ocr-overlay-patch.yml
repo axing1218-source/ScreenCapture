@@ -23,24 +23,26 @@ jobs:
           from pathlib import Path
           path = Path('Src/StarCapOcrV2.h')
           text = path.read_text(encoding='utf-8-sig')
-          old = '''                auto bgColor = sampleBackground(it.block);
-                const float lum = bgColor.r * .299f + bgColor.g * .587f + bgColor.b * .114f;
-                auto textColor = lum > .55f ? D2D1::ColorF(D2D1::ColorF::Black) : D2D1::ColorF(D2D1::ColorF::White);
-                Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bgBrush, textBrush;
-                ctx->CreateSolidColorBrush(bgColor, bgBrush.GetAddressOf());
-                ctx->CreateSolidColorBrush(textColor, textBrush.GetAddressOf());
-                if (!bgBrush || !textBrush) continue;
-                ctx->FillRectangle(it.slot, bgBrush.Get());
-'''
-          new = '''                // Keep translated screenshot content visually consistent in both app themes.
-                // The translation layer is image content, not UI: use the same uniform white
-                // surface as direct screenshot translation and always render black text on it.
-                Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bgBrush, textBrush;
-                ctx->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), bgBrush.GetAddressOf());
-                ctx->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), textBrush.GetAddressOf());
-                if (!bgBrush || !textBrush) continue;
-                ctx->FillRectangle(it.slot, bgBrush.Get());
-'''
+          old = (
+              "                auto bgColor = sampleBackground(it.block);\n"
+              "                const float lum = bgColor.r * .299f + bgColor.g * .587f + bgColor.b * .114f;\n"
+              "                auto textColor = lum > .55f ? D2D1::ColorF(D2D1::ColorF::Black) : D2D1::ColorF(D2D1::ColorF::White);\n"
+              "                Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bgBrush, textBrush;\n"
+              "                ctx->CreateSolidColorBrush(bgColor, bgBrush.GetAddressOf());\n"
+              "                ctx->CreateSolidColorBrush(textColor, textBrush.GetAddressOf());\n"
+              "                if (!bgBrush || !textBrush) continue;\n"
+              "                ctx->FillRectangle(it.slot, bgBrush.Get());\n"
+          )
+          new = (
+              "                // Keep translated screenshot content visually consistent in both app themes.\n"
+              "                // The translation layer is image content, not UI: use the same uniform white\n"
+              "                // surface as direct screenshot translation and always render black text on it.\n"
+              "                Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bgBrush, textBrush;\n"
+              "                ctx->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), bgBrush.GetAddressOf());\n"
+              "                ctx->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), textBrush.GetAddressOf());\n"
+              "                if (!bgBrush || !textBrush) continue;\n"
+              "                ctx->FillRectangle(it.slot, bgBrush.Get());\n"
+          )
           if old not in text:
               raise SystemExit('Expected legacy sampled-background block was not found')
           path.write_text(text.replace(old, new, 1), encoding='utf-8')
