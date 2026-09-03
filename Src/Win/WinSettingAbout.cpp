@@ -18,7 +18,7 @@ namespace {
 
 WinSettingAbout::WinSettingAbout(Ling::WinBase* parent):Ling::Node(parent)
 {
-    std::vector<std::wstring> keys = { L"version",L"project",L"author" };
+    std::vector<std::wstring> keys = { L"version",L"project",L"author",L"telegram" };
     for (auto& key : keys)
     {
         auto box = makeChild<Ling::Node>();
@@ -27,7 +27,7 @@ WinSettingAbout::WinSettingAbout(Ling::WinBase* parent):Ling::Node(parent)
         box->setAlignItems(Ling::Align::Center);
 
         auto label = box->makeChild<Ling::Label>();
-        label->setText(Lang::get(L"about." + key));
+        label->setText(key == L"telegram" ? L"Telegram" : Lang::get(L"about." + key));
         label->setColor(aboutText());
         label->setHeightPercent(100.f);
         label->setJustifyContent(Ling::Justify::Center);
@@ -49,6 +49,15 @@ WinSettingAbout::WinSettingAbout(Ling::WinBase* parent):Ling::Node(parent)
             btn->onClick.add([this](Ling::Button* btn) {
                 std::wstring projectUrl{ L"https://github.com/axing1218-source" };
                 ShellExecute(win->hwnd, L"open", projectUrl.data(), nullptr, nullptr, SW_SHOWNORMAL);
+                });
+        }
+        else if (key == L"telegram") {
+            btn->setText(L"@axing1218");
+            btn->setColor(0x597ef7ff);
+            btn->setHoverColor(0x597ef7ff);
+            btn->onClick.add([this](Ling::Button* btn) {
+                std::wstring telegramUrl{ L"https://t.me/axing1218" };
+                ShellExecute(win->hwnd, L"open", telegramUrl.data(), nullptr, nullptr, SW_SHOWNORMAL);
                 });
         }
         else {
