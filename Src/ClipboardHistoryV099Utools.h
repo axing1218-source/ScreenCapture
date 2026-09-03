@@ -77,3 +77,4 @@ namespace ClipboardHistory
 #include "ClipboardHistoryV099PointerFix.h"
 #include "ClipboardHistoryV099FinalFix.h"
 #include "ClipboardHistoryV099FilePreview.h"
+#include "ClipboardHistoryV099FilePreviewFix.h"
