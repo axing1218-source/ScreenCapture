@@ -12,6 +12,8 @@
 std::unique_ptr<WinSetting> winSetting;
 
 namespace {
+	Ling::Button* settingCloseBtn{ nullptr };
+
 	bool useDarkMode()
 	{
 		auto* setting = Setting::get();
@@ -37,6 +39,7 @@ WinSetting::WinSetting() :Ling::WinBase()
 	// 不放掉的话这个对象会一直活着，Ling 那边就永远看不到"一个窗口都不剩"，D2D 设备
 	// 也就永远还不回去
 	onDestroy.add([]() {
+		settingCloseBtn = nullptr;
 		Ling::App::get()->dq.TryEnqueue([]() { winSetting.reset(); });
 	});
 	setTitle(Lang::get(L"setting.title"));
@@ -87,6 +90,7 @@ void WinSetting::onCreated()
 	content->setFlexDirection(Ling::FlexDirection::Column);
 
 	auto closeBtn = body->makeChild<Ling::Button>();
+	settingCloseBtn = closeBtn;
 	closeBtn->setSize(42.f, 32.f);
 	closeBtn->setPositionType(Ling::Position::Absolute);
 	closeBtn->setPosition(Ling::Edge::Right, 0);
@@ -144,17 +148,62 @@ void WinSetting::initMenuItems(Ling::Node* menuBox)
 	themeBtn->setHoverColor(dark ? 0xFFFFFFFF : 0x202124FF);
 	themeBtn->setHoverBg(dark ? 0x383A3FFF : 0xE1E1E3FF);
 	themeBtn->setText(dark ? L"☾  深色模式：开" : L"☾  深色模式：关");
-	themeBtn->onClick.add([](Ling::Button* btn) {
+	themeBtn->onClick.add([this, menuBox, themeBtn](Ling::Button*) {
 		auto* setting = Setting::get();
-		if (!setting) return;
+		if (!setting || !hwnd) return;
+
+		// Do not destroy/recreate the Settings window here. The previous implementation
+		// called close() and WinSetting::init(), which caused a visible flash and also
+		// reran setCenter(), moving the window back to the middle of the monitor.
+		// Freeze this HWND, rebuild only the themed node surface, then repaint once.
+		SendMessageW(hwnd, WM_SETREDRAW, FALSE, 0);
 		const bool next = !setting->getToolFlag(L"app", L"darkMode", false);
 		setting->setToolFlag(L"app", L"darkMode", next);
 		ClipboardHistory::v099RefreshTheme();
 
-		// Rebuild the settings surface so every static color is recreated from the
-		// selected palette. Clipboard windows are repainted immediately above.
-		btn->win->close();
-		Ling::App::get()->dq.TryEnqueue([]() { WinSetting::init(); });
+		body->setBg(pageBg());
+		menuBox->setBg(sideBg());
+		for (size_t i = 0; i < menus.size(); ++i) {
+			auto* item = menus[i];
+			if (!item) continue;
+			if ((int)i == menuIndex) {
+				item->setColor(0xFFFFFFFF);
+				item->setBg(0x597ef7ff);
+				item->setHoverColor(0xFFFFFFFF);
+				item->setHoverBg(0x597ef7ff);
+			}
+			else {
+				item->setColor(normalText());
+				item->setBg(0x00000000);
+				item->setHoverColor(normalText());
+				item->setHoverBg(hoverBg());
+			}
+		}
+
+		themeBtn->setColor(next ? 0xDDE3FFFF : 0x4A4F5AFF);
+		themeBtn->setHoverColor(next ? 0xFFFFFFFF : 0x202124FF);
+		themeBtn->setHoverBg(next ? 0x383A3FFF : 0xE1E1E3FF);
+		themeBtn->setText(next ? L"☾  深色模式：开" : L"☾  深色模式：关");
+		if (settingCloseBtn) settingCloseBtn->setColor(normalText());
+
+		// The settings pages use palette functions at construction time. Recreate only
+		// the current page inside the same native window so every label, border, edit,
+		// button and shortcut control gets the new palette without changing window pos.
+		if (menuIndex == 0 && content)
+			static_cast<WinSettingCommon*>(content)->hideSelectBox();
+		if (content) body->removeChild(content);
+		if (menuIndex == 0) content = body->makeChild<WinSettingCommon>();
+		else if (menuIndex == 1) content = body->makeChild<WinSettingShortcut>();
+		else content = body->makeChild<WinSettingAbout>();
+		applyContentTheme(content);
+		content->setFlexGrow(1.0);
+		content->setHeightPercent(100.f);
+		content->setPadding(20.f, 40.f, 20.f, 40.f);
+		content->setFlexDirection(Ling::FlexDirection::Column);
+
+		SendMessageW(hwnd, WM_SETREDRAW, TRUE, 0);
+		RedrawWindow(hwnd, nullptr, nullptr,
+			RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 	});
 }
 void WinSetting::onMenuItemClick(Ling::Button* menuItem)
@@ -210,5 +259,4 @@ LRESULT WinSetting::onHitTest(const POINT pos)
 	}
 	return HTCLIENT;
 }
-
 
