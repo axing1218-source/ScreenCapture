@@ -75,12 +75,10 @@ namespace ClipboardHistory
 
     inline void v099ApplyRoundRegion(HWND hwnd)
     {
-        if (!hwnd) return;
-        RECT rc{};
-        if (!GetClientRect(hwnd, &rc)) return;
-        if (rc.right <= 0 || rc.bottom <= 0) return;
-        HRGN rgn = CreateRoundRectRgn(0, 0, rc.right + 1, rc.bottom + 1, 16, 16);
-        if (rgn) SetWindowRgn(hwnd, rgn, TRUE);
+        // Keep the existing call sites, but use DWM's compositor instead of a GDI
+        // window region. This gives smooth native corners and prevents stale gray
+        // resize-frame artifacts after returning from the full preview.
+        ClipboardHistoryWindowShim::applyNativeFrame(hwnd, v099Border());
     }
 
     inline RECT v099HeaderBadgeRect() { return { 18, 14, 166, 54 }; }
