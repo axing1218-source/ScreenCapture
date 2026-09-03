@@ -1,10 +1,10 @@
 #pragma once
 
 // Final dark-mode polish for the legacy full-content text preview.
-// The original EDIT control still asks its parent for a fixed light brush through
-// WM_CTLCOLOREDIT. Wrap the already-created full-preview window and answer that
-// message with the app theme palette so the text surface no longer becomes a
-// large bright rectangle in dark mode.
+// The preview body is a read-only EDIT control. Windows sends WM_CTLCOLORSTATIC
+// (rather than WM_CTLCOLOREDIT) for ES_READONLY edits, so handle both messages.
+// The compact preview also reapplies its native DWM frame while it is shown or
+// activated; keep that frame color synchronized with the active app theme too.
 namespace ClipboardHistoryV099DarkPreviewFix
 {
     inline WNDPROC baseProc{ nullptr };
@@ -22,6 +22,11 @@ namespace ClipboardHistoryV099DarkPreviewFix
         return ClipboardHistory::v099DarkMode() ? RGB(232, 234, 237) : RGB(32, 33, 36);
     }
 
+    inline COLORREF frameBorder()
+    {
+        return ClipboardHistory::v099DarkMode() ? RGB(58, 62, 70) : RGB(229, 231, 235);
+    }
+
     inline HBRUSH currentBrush()
     {
         const COLORREF wanted = editBg();
@@ -33,13 +38,31 @@ namespace ClipboardHistoryV099DarkPreviewFix
         return editBrush;
     }
 
+    inline void applyFrame(HWND hwnd)
+    {
+        if (!hwnd || !IsWindow(hwnd)) return;
+        ClipboardHistoryWindowShim::applyNativeFrame(hwnd, frameBorder());
+    }
+
+    inline void refreshEdit()
+    {
+        HWND edit = ClipboardHistoryWindowShim::previewEdit;
+        if (!edit || !IsWindow(edit)) return;
+        InvalidateRect(edit, nullptr, TRUE);
+        UpdateWindow(edit);
+    }
+
     inline LRESULT CALLBACK proc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
-        if (msg == WM_CTLCOLOREDIT &&
+        // ES_READONLY EDIT controls normally request WM_CTLCOLORSTATIC. Keep
+        // WM_CTLCOLOREDIT as well so the surface stays correct if editability
+        // changes later.
+        if ((msg == WM_CTLCOLORSTATIC || msg == WM_CTLCOLOREDIT) &&
             (HWND)lParam == ClipboardHistoryWindowShim::previewEdit) {
             HDC dc = (HDC)wParam;
             SetTextColor(dc, editText());
             SetBkColor(dc, editBg());
+            SetBkMode(dc, OPAQUE);
             return (LRESULT)currentBrush();
         }
 
@@ -47,12 +70,20 @@ namespace ClipboardHistoryV099DarkPreviewFix
             ? CallWindowProcW(baseProc, hwnd, msg, wParam, lParam)
             : DefWindowProcW(hwnd, msg, wParam, lParam);
 
-        if ((msg == WM_SHOWWINDOW && wParam) || msg == WM_SETTINGCHANGE) {
-            if (ClipboardHistoryWindowShim::previewEdit &&
-                IsWindow(ClipboardHistoryWindowShim::previewEdit)) {
-                InvalidateRect(ClipboardHistoryWindowShim::previewEdit, nullptr, TRUE);
-            }
+        // previewFrameProc calls applyNativeFrame() with its legacy light border
+        // on these messages. Reapply the theme-aware frame after the base proc so
+        // dark mode cannot leave a one-pixel light outline around the popup.
+        if (msg == WM_NCACTIVATE || msg == WM_SIZE || msg == WM_ACTIVATE ||
+            msg == WM_SETFOCUS || (msg == WM_SHOWWINDOW && wParam) ||
+            msg == WM_SETTINGCHANGE) {
+            applyFrame(hwnd);
         }
+
+        if ((msg == WM_SHOWWINDOW && wParam) || msg == WM_SETTINGCHANGE ||
+            msg == WM_ACTIVATE || msg == WM_SETFOCUS) {
+            refreshEdit();
+        }
+
         if (msg == WM_DESTROY) {
             baseProc = nullptr;
         }
@@ -69,10 +100,8 @@ namespace ClipboardHistoryV099DarkPreviewFix
         if (!baseProc) return;
 
         SetPropW(hwnd, L"StarCapV099DarkPreviewFix", (HANDLE)1);
-        if (ClipboardHistoryWindowShim::previewEdit &&
-            IsWindow(ClipboardHistoryWindowShim::previewEdit)) {
-            InvalidateRect(ClipboardHistoryWindowShim::previewEdit, nullptr, TRUE);
-        }
+        applyFrame(hwnd);
+        refreshEdit();
     }
 
     inline void CALLBACK onShow(HWINEVENTHOOK, DWORD event, HWND hwnd,
