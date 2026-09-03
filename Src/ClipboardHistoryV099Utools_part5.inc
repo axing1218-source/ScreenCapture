@@ -65,14 +65,14 @@
         else if (item.type == ItemType::File) {
             RECT body{ panel.left + 20, panel.top + 10, panel.right - 18, panel.bottom - 26 };
             v099DrawFilePreview(dis->hDC, item, body);
-            v099DrawBottomMeta(dis->hDC, item, panel, false);
+            v099DrawBottomMeta(dis->hDC, item, panel, true);
         }
         else {
             auto previewText = itemPreview(item, oversized);
             RECT body{ panel.left + 20, panel.top + 12, panel.right - 16, panel.bottom - 26 };
             drawText(dis->hDC, previewText, body, v099Text(), uiFont,
                 DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
-            v099DrawBottomMeta(dis->hDC, item, panel, oversized);
+            v099DrawBottomMeta(dis->hDC, item, panel, true);
         }
     }
 
