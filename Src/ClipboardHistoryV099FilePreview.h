@@ -281,22 +281,18 @@ namespace ClipboardHistoryV099FilePreview
         if (textEdit && IsWindow(textEdit)) return;
         textEdit = CreateWindowExW(0, L"EDIT", L"",
             WS_CHILD | WS_TABSTOP | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | ES_NOHIDESEL,
-            0,0,0,0, hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
+            0, 0, 0, 0, hwnd, nullptr, GetModuleHandleW(nullptr), nullptr);
         if (!textEdit) return;
         SendMessageW(textEdit, WM_SETFONT, (WPARAM)ClipboardHistoryLegacy::uiFont, TRUE);
         SendMessageW(textEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(6,6));
-        textEditBase = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(textEdit, GWLP_WNDPROC, (LONG_PTR)textProc));
+        textEditBase = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(textEdit,GWLP_WNDPROC,(LONG_PTR)textProc));
         layoutText(hwnd);
     }
 
     inline void resetContent()
     {
-        currentImage.reset();
-        currentText.clear();
-        imageMode = ImageMode::Fit;
-        imageScale = 1.0;
-        panX = panY = 0;
-        imageDragging = false;
+        currentImage.reset(); currentText.clear(); kind=PreviewKind::Info;
+        imageMode=ImageMode::Fit; imageScale=1.0; panX=panY=0; imageDragging=false; copiedFeedback=false;
 
         std::error_code ec;
         if (std::filesystem::is_regular_file(currentPath, ec) && isImageFile(currentPath)) {
@@ -533,11 +529,13 @@ namespace ClipboardHistoryV099FilePreview
             registered = RegisterClassW(&wc) || GetLastError()==ERROR_CLASS_ALREADY_EXISTS;
         }
         if (!registered) return;
+        // Keep file preview exactly aligned with the stable direct Text/Image popup.
+        // All three preview kinds should open at the same size and screen position.
         RECT work{}; SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
-        int ww=std::min(820,std::max(640,(int)(work.right-work.left)*48/100));
-        int wh=std::min(600,std::max(460,(int)(work.bottom-work.top)*62/100));
-        int x=work.left+((work.right-work.left)-ww)/2;
-        int y=work.top+((work.bottom-work.top)-wh)/2;
+        const int ww=std::min(760,std::max(620,(int)(work.right-work.left)*46/100));
+        const int wh=std::min(540,std::max(420,(int)(work.bottom-work.top)*58/100));
+        const int x=work.left+((work.right-work.left)-ww)/2;
+        const int y=work.top+((work.bottom-work.top)-wh)/2;
         window=CreateWindowExW(WS_EX_TOOLWINDOW,L"StarCapClipboardFilePreviewV099",L"StarCap 文件预览",
             WS_POPUP|WS_THICKFRAME|WS_CLIPCHILDREN|WS_SYSMENU,x,y,ww,wh,
             ClipboardHistoryLegacy::historyWnd,nullptr,GetModuleHandleW(nullptr),nullptr);
@@ -594,28 +592,26 @@ namespace ClipboardHistoryV099FilePreview
         HWND list=ClipboardHistoryLegacy::listWnd;
         if (!list || !IsWindow(list) || GetPropW(list,L"StarCapV099FilePreview")) return;
         listBase=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(list,GWLP_WNDPROC,(LONG_PTR)listProc));
-        SetPropW(list,L"StarCapV099FilePreview",(HANDLE)1);
+        if(listBase) SetPropW(list,L"StarCapV099FilePreview",(HANDLE)1);
     }
 
-    inline VOID CALLBACK timerProc(HWND hwnd,UINT,UINT_PTR id,DWORD)
+    inline VOID CALLBACK installTimerProc(HWND hwnd, UINT, UINT_PTR id, DWORD)
     {
-        if (hwnd&&IsWindow(hwnd)) KillTimer(hwnd,id);
-        install();
+        if(hwnd&&IsWindow(hwnd)) KillTimer(hwnd,id); install();
     }
 
     inline void CALLBACK onShow(HWINEVENTHOOK,DWORD event,HWND hwnd,LONG idObject,LONG,DWORD,DWORD)
     {
-        if (event!=EVENT_OBJECT_SHOW || idObject!=OBJID_WINDOW || !hwnd) return;
-        DWORD pid=0; GetWindowThreadProcessId(hwnd,&pid); if (pid!=GetCurrentProcessId()) return;
+        if(event!=EVENT_OBJECT_SHOW||idObject!=OBJID_WINDOW||!hwnd) return;
+        DWORD pid=0; GetWindowThreadProcessId(hwnd,&pid); if(pid!=GetCurrentProcessId()) return;
         wchar_t cls[96]{}; GetClassNameW(hwnd,cls,(int)std::size(cls));
-        if (wcscmp(cls,L"StarCapClipboardHistoryV099")==0)
-            SetTimer(hwnd,INSTALL_TIMER,140,timerProc);
+        if(wcscmp(cls,L"StarCapClipboardHistoryV099")==0) SetTimer(hwnd,INSTALL_TIMER,140,installTimerProc);
     }
 
     struct Lifetime
     {
-        Lifetime() { showHook=SetWinEventHook(EVENT_OBJECT_SHOW,EVENT_OBJECT_SHOW,nullptr,onShow,GetCurrentProcessId(),0,WINEVENT_OUTOFCONTEXT); }
-        ~Lifetime() { if(showHook) UnhookWinEvent(showHook); if(editBrush) DeleteObject(editBrush); }
+        Lifetime(){ showHook=SetWinEventHook(EVENT_OBJECT_SHOW,EVENT_OBJECT_SHOW,nullptr,onShow,GetCurrentProcessId(),0,WINEVENT_OUTOFCONTEXT); }
+        ~Lifetime(){ if(showHook) UnhookWinEvent(showHook); if(editBrush) DeleteObject(editBrush); }
     };
     inline Lifetime lifetime;
 }
