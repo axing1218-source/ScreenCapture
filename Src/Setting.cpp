@@ -32,7 +32,7 @@ namespace {
 
     // 配置文件的默认内容。旧版 config.json 没有 clipboard 键时，getShortcutKey
     // 仍会回落到 Ctrl+Alt+V，因此升级不会要求用户删配置重来。
-    constexpr std::wstring_view defaultConfig{ LR"""({"common":{"autoStart":false,"language":"zh-CN"},"shortcutKey":{"cap":"Ctrl+Alt+A","clipboard":"Ctrl+Alt+V"}})""" };
+    constexpr std::wstring_view defaultConfig{ LR"""({"common":{"autoStart":false,"language":"zh-CN"},"shortcutKey":{"cap":"Ctrl+Alt+A","clipboard":"Ctrl+Alt+V"},"gemini":{"model":"gemini-3.5-flash-lite"}})""" };
 
     std::wstring protectText(const std::wstring& value)
     {
@@ -303,9 +303,9 @@ void Setting::setGeminiApiKey(const std::wstring& apiKey)
 std::wstring Setting::getGeminiModel()
 {
     auto gemini = configObj.GetNamedObject(L"gemini", nullptr);
-    if (!gemini) return L"gemini-3.7-flash";
-    auto model = std::wstring{ gemini.GetNamedString(L"model", L"gemini-3.7-flash") };
-    if (model.empty()) model = L"gemini-3.7-flash";
+    if (!gemini) return L"gemini-3.5-flash-lite";
+    auto model = std::wstring{ gemini.GetNamedString(L"model", L"gemini-3.5-flash-lite") };
+    if (model.empty()) model = L"gemini-3.5-flash-lite";
     return model;
 }
 
@@ -316,7 +316,7 @@ void Setting::setGeminiModel(const std::wstring& model)
         gemini = JsonObject();
         configObj.SetNamedValue(L"gemini", gemini);
     }
-    gemini.SetNamedValue(L"model", JsonValue::CreateStringValue(model.empty() ? L"gemini-3.7-flash" : model));
+    gemini.SetNamedValue(L"model", JsonValue::CreateStringValue(model.empty() ? L"gemini-3.5-flash-lite" : model));
     save();
 }
 
@@ -397,7 +397,6 @@ void Setting::initShortcutKeys()
         WinCap::init();
     });
 }
-
 
 
 
