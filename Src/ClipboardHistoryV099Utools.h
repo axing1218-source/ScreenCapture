@@ -15,7 +15,14 @@
 #include "ClipboardHistoryV099Utools_part4.inc"
 #undef v099DrawAppLogo
 
+// Keep the existing row layout code, but rename the direct-to-screen owner-draw
+// function so we can wrap it with an off-screen buffer before the ListBox starts
+// calling v099DrawListItem from the later source parts.
+#define v099DrawListItem v099DrawListItemDirect
 #include "ClipboardHistoryV099Utools_part5.inc"
+#undef v099DrawListItem
+#include "ClipboardHistoryV099BufferedRows.inc"
+
 #include "ClipboardHistoryV099Utools_part6.inc"
 #include "ClipboardHistoryV099Utools_part7.inc"
 #include "ClipboardHistoryV099Utools_part8.inc"
