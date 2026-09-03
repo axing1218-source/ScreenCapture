@@ -22,6 +22,13 @@ namespace {
 	uint32_t sideBg() { return useDarkMode() ? 0x292A2DFF : 0xEEEEF0FF; }
 	uint32_t normalText() { return useDarkMode() ? 0xE8EAEDFF : 0x333333FF; }
 	uint32_t hoverBg() { return useDarkMode() ? 0x383A3FFF : 0xE1E1E3FF; }
+
+	void applyContentTheme(Ling::Node* node)
+	{
+		if (!node) return;
+		node->setBg(pageBg());
+		node->setColor(normalText());
+	}
 }
 
 WinSetting::WinSetting() :Ling::WinBase()
@@ -64,15 +71,18 @@ void WinSetting::onCreated()
 {
 	enableShadow();
 	body->setBg(pageBg());
+	body->setColor(normalText());
 	body->setFlexDirection(Ling::FlexDirection::Row);
 	auto menuBox = body->makeChild<Ling::Node>();
 	menuBox->setBg(sideBg());
+	menuBox->setColor(normalText());
 	menuBox->setWidth(160.f);
 	menuBox->setHeightPercent(100.f);
 	menuBox->setPaddingTop(40.f);
 	initMenuItems(menuBox);
 
 	content = body->makeChild<WinSettingCommon>();
+	applyContentTheme(content);
 	content->setFlexGrow(1.0);
 	content->setHeightPercent(100.f);
 	content->setPaddingTop(40.f);
@@ -180,6 +190,7 @@ void WinSetting::onMenuItemClick(Ling::Button* menuItem)
 	else if (menuIndex == 2) {
 		content = body->makeChild<WinSettingAbout>();
 	}
+	applyContentTheme(content);
 	content->setFlexGrow(1.0);
 	content->setHeightPercent(100.f);
 	content->setPadding(20.f,40.f,20.f,40.f);
