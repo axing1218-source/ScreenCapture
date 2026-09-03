@@ -1,9 +1,20 @@
 ﻿#include "pch.h"
 #include "../Lang.h"
+#include "../Setting.h"
 #include "WinSetting.h"
 #include "WinSettingAbout.h"
 #include "../Util.h"
 #include "../Version.h"
+
+namespace {
+    bool aboutDarkMode()
+    {
+        auto* setting = Setting::get();
+        return setting && setting->getToolFlag(L"app", L"darkMode", false);
+    }
+    uint32_t aboutText() { return aboutDarkMode() ? 0xE8EAEDFF : 0x333333FF; }
+    uint32_t aboutBorder() { return aboutDarkMode() ? 0x4A4C52FF : 0xE0E0E0FF; }
+}
 
 WinSettingAbout::WinSettingAbout(Ling::WinBase* parent):Ling::Node(parent)
 {
@@ -17,12 +28,15 @@ WinSettingAbout::WinSettingAbout(Ling::WinBase* parent):Ling::Node(parent)
 
         auto label = box->makeChild<Ling::Label>();
         label->setText(Lang::get(L"about." + key));
+        label->setColor(aboutText());
         label->setHeightPercent(100.f);
         label->setJustifyContent(Ling::Justify::Center);
         label->setFlexGrow(1.f);
 
         auto btn = box->makeChild<Ling::Button>();
         btn->setId(key);
+        btn->setColor(aboutText());
+        btn->setHoverColor(aboutText());
         if (key == L"version") {
             btn->setText(STARCAP_DISPLAY_VERSION);
         }
@@ -49,7 +63,7 @@ WinSettingAbout::WinSettingAbout(Ling::WinBase* parent):Ling::Node(parent)
 
         auto border = makeChild<Ling::Node>();
         border->setHeight(1.f);
-        border->setBg(0xE0E0E0FF);
+        border->setBg(aboutBorder());
     }
 }
 
