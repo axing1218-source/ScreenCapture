@@ -229,7 +229,7 @@ void WinSettingCommon::initGeminiCtrls()
     geminiStatus->setWidthPercent(100.f);
     geminiStatus->setFontSize(11.f);
     geminiStatus->setColor(settingsMuted());
-    geminiStatus->setText(L"翻译功能使用此 API Key；程序不会把 Key 写入源码。默认模型 gemini-3.7-flash");
+    geminiStatus->setText(L"翻译功能使用此 API Key；程序不会把 Key 写入源码。默认模型 gemini-3.5-flash-lite");
 
     auto border = makeChild<Ling::Node>();
     border->setHeight(1.f);
@@ -370,4 +370,3 @@ void WinSettingCommon::showSelectBox(Ling::Button* btn)
         selectBox = nullptr;
     });
 }
-
