@@ -28,6 +28,10 @@
         return ClipboardHistoryLegacy::searchProc(hwnd, msg, wParam, lParam);
     }
 
+    // v099DrawListItemDirect is defined in part5. The public owner-draw entry is
+    // defined after all split source parts, where it can safely add buffering.
+    inline void v099DrawListItem(const DRAWITEMSTRUCT* dis);
+
     inline int v099TotalContentHeight()
     {
         int total = 0;
