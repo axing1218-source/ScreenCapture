@@ -202,10 +202,10 @@ LRESULT WinSetting::onHitTest(const POINT pos)
 		auto result = borderHitTest(pt);
 		if (result != HTCLIENT) return result;
 	}
+	// Only the narrow top strip is draggable. The old sidebar drag region covered
+	// the left 120 px all the way to the bottom and swallowed mouse events from the
+	// dark-mode button, making only its right-hand blank area clickable.
 	if (pt.x > 0 && pt.y > 0 && pt.x < w - 32 * dpi && pt.y < 40 * dpi) {
-		return HTCAPTION;
-	}
-	if (pt.x > 0 && pt.y > 40*4*dpi && pt.x < 120 * dpi && pt.y < h) {
 		return HTCAPTION;
 	}
 	return HTCLIENT;
