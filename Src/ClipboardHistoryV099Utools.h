@@ -37,3 +37,4 @@ namespace ClipboardHistory
 #include "ClipboardHistoryV099Polish.h"
 #include "ClipboardHistoryV099Stable.h"
 #include "ClipboardHistoryV099PointerFix.h"
+#include "ClipboardHistoryV099FinalFix.h"
