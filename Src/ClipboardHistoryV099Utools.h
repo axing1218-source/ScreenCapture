@@ -16,17 +16,24 @@
 #undef v099DrawAppLogo
 
 // Keep the existing row layout code, but rename the direct-to-screen owner-draw
-// function so we can wrap it with an off-screen buffer before the ListBox starts
-// calling v099DrawListItem from the later source parts.
+// implementation. part6 forward-declares the buffered public entry so the later
+// WM_DRAWITEM handler can call it safely.
 #define v099DrawListItem v099DrawListItemDirect
 #include "ClipboardHistoryV099Utools_part5.inc"
 #undef v099DrawListItem
-#include "ClipboardHistoryV099BufferedRows.inc"
 
 #include "ClipboardHistoryV099Utools_part6.inc"
 #include "ClipboardHistoryV099Utools_part7.inc"
 #include "ClipboardHistoryV099Utools_part8.inc"
 #include "ClipboardHistoryV099Utools_part9.inc"
+
+// part9 closes namespace ClipboardHistory, so reopen it here to provide the
+// buffered owner-draw implementation declared in part6.
+namespace ClipboardHistory
+{
+#include "ClipboardHistoryV099BufferedRows.inc"
+}
+
 #include "ClipboardHistoryV099Polish.h"
 #include "ClipboardHistoryV099Stable.h"
 #include "ClipboardHistoryV099PointerFix.h"
