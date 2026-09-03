@@ -8,10 +8,11 @@
         fillRect(dc, client, v099Canvas());
 
         RECT badge = v099HeaderBadgeRect();
-        // The embedded logo pixels were pre-composited against RGB(230,230,230),
-        // including antialiased rounded corners. Use the same badge background and
-        // draw the bitmap directly; GDI region clipping created visible stair steps.
-        fillRoundRect(dc, badge, RGB(230, 230, 230), 18);
+        // Keep the clipboard identity card visually elevated in both themes. The
+        // current StarCap logo renderer is vector/AA, so it no longer needs the old
+        // hard-coded RGB(230,230,230) bitmap-compositing background.
+        const COLORREF badgeBg = v099DarkMode() ? RGB(46, 48, 55) : RGB(230, 230, 230);
+        fillRoundRect(dc, badge, badgeBg, 18);
         RECT logo{ badge.left + 8, badge.top + 4, badge.left + 40, badge.top + 36 };
         v099DrawAppLogo(dc, logo);
 
@@ -22,7 +23,7 @@
         drawText(dc, std::format(L"{} 条记录", items.size()), count, v099Muted(), smallFont,
             DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         RECT closeRc = v099CloseRect(client);
-        drawText(dc, L"×", closeRc, RGB(135, 135, 135), uiFont,
+        drawText(dc, L"×", closeRc, v099Muted(), uiFont,
             DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
         RECT search = v099SearchOuterRect(client);
