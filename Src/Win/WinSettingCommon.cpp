@@ -6,6 +6,20 @@
 #include "WinSetting.h"
 #include "WinSettingCommon.h"
 
+namespace {
+    bool settingsDarkMode()
+    {
+        auto* setting = Setting::get();
+        return setting && setting->getToolFlag(L"app", L"darkMode", false);
+    }
+    uint32_t settingsText() { return settingsDarkMode() ? 0xE8EAEDFF : 0x333333FF; }
+    uint32_t settingsMuted() { return settingsDarkMode() ? 0xAEB2B9FF : 0x777777FF; }
+    uint32_t settingsSurface() { return settingsDarkMode() ? 0x2B2C30FF : 0xFFFFFFFF; }
+    uint32_t settingsBorder() { return settingsDarkMode() ? 0x4A4C52FF : 0xE0E0E0FF; }
+    uint32_t settingsHover() { return settingsDarkMode() ? 0x383A3FFF : 0xF5F5F5FF; }
+    uint32_t settingsPlaceholder() { return settingsDarkMode() ? 0x8B9098FF : 0xAAAAAAFF; }
+}
+
 WinSettingCommon::WinSettingCommon(Ling::WinBase* parent):Ling::Node(parent)
 {
     initAutoStartCtrls();
@@ -33,6 +47,7 @@ void WinSettingCommon::initAutoStartCtrls()
 
     auto label = box->makeChild<Ling::Label>();
     label->setText(Lang::get(L"setting.autoStart"));
+    label->setColor(settingsText());
     label->setHeightPercent(100.f);
     label->setJustifyContent(Ling::Justify::Center);
     label->setFlexGrow(1.f);
@@ -54,7 +69,7 @@ void WinSettingCommon::initAutoStartCtrls()
 
     auto border = makeChild<Ling::Node>();
     border->setHeight(1.f);
-    border->setBg(0xE0E0E0FF);
+    border->setBg(settingsBorder());
 }
 
 void WinSettingCommon::initCaptureBorderCtrls()
@@ -66,20 +81,24 @@ void WinSettingCommon::initCaptureBorderCtrls()
 
     auto label = box->makeChild<Ling::Label>();
     label->setText(L"截图边框粗细");
+    label->setColor(settingsText());
     label->setHeightPercent(100.f);
     label->setJustifyContent(Ling::Justify::Center);
     label->setFlexGrow(1.f);
 
     auto minusBtn = box->makeChild<Ling::Button>();
     minusBtn->setText(L"−");
+    minusBtn->setColor(settingsText());
+    minusBtn->setHoverColor(settingsText());
     minusBtn->setSize(30.f, 28.f);
     minusBtn->setFontSize(16.f);
-    minusBtn->setBorder(1.f, 0xE0E0E0FF);
-    minusBtn->setHoverBg(0xF5F5F5FF);
+    minusBtn->setBorder(1.f, settingsBorder());
+    minusBtn->setHoverBg(settingsHover());
 
     borderWidthLabel = box->makeChild<Ling::Label>();
     borderWidthLabel->setWidth(48.f);
     borderWidthLabel->setHeight(28.f);
+    borderWidthLabel->setColor(settingsText());
     borderWidthLabel->setAlignItems(Ling::Align::Center);
     borderWidthLabel->setJustifyContent(Ling::Justify::Center);
     auto current = std::clamp(Setting::get()->getToolNum(L"capture", L"borderWidth", 2.f), 0.f, 8.f);
@@ -87,10 +106,12 @@ void WinSettingCommon::initCaptureBorderCtrls()
 
     auto plusBtn = box->makeChild<Ling::Button>();
     plusBtn->setText(L"+");
+    plusBtn->setColor(settingsText());
+    plusBtn->setHoverColor(settingsText());
     plusBtn->setSize(30.f, 28.f);
     plusBtn->setFontSize(16.f);
-    plusBtn->setBorder(1.f, 0xE0E0E0FF);
-    plusBtn->setHoverBg(0xF5F5F5FF);
+    plusBtn->setBorder(1.f, settingsBorder());
+    plusBtn->setHoverBg(settingsHover());
 
     auto change = [this](float delta) {
         auto setting = Setting::get();
@@ -104,7 +125,7 @@ void WinSettingCommon::initCaptureBorderCtrls()
 
     auto border = makeChild<Ling::Node>();
     border->setHeight(1.f);
-    border->setBg(0xE0E0E0FF);
+    border->setBg(settingsBorder());
 }
 
 void WinSettingCommon::initGeminiCtrls()
@@ -116,6 +137,7 @@ void WinSettingCommon::initGeminiCtrls()
 
     auto keyLabel = keyRow->makeChild<Ling::Label>();
     keyLabel->setText(L"Gemini API Key");
+    keyLabel->setColor(settingsText());
     keyLabel->setHeightPercent(100.f);
     keyLabel->setJustifyContent(Ling::Justify::Center);
     keyLabel->setFlexGrow(1.f);
@@ -124,20 +146,26 @@ void WinSettingCommon::initGeminiCtrls()
     geminiApiKeyBox->setSize(230.f, 30.f);
     geminiApiKeyBox->setPadding(6.f);
     geminiApiKeyBox->setFontSize(12.f);
-    geminiApiKeyBox->setBg(0xFFFFFFFF);
-    geminiApiKeyBox->setBorder(1.f, 0xD8D8D8FF);
+    geminiApiKeyBox->setBg(settingsSurface());
+    geminiApiKeyBox->setBorder(1.f, settingsBorder());
     geminiApiKeyBox->setBorderRadius(4.f);
+    geminiApiKeyBox->setColor(settingsText());
+    geminiApiKeyBox->setCaretColor(settingsText());
+    geminiApiKeyBox->setPlaceholderColor(settingsPlaceholder());
+    geminiApiKeyBox->setSelectionBgColor(settingsDarkMode() ? 0x596EF766 : 0x99C9EF99);
     geminiApiKeyBox->setPlaceholder(L"粘贴 Gemini API Key");
     geminiApiKeyBox->setText(Setting::get()->getGeminiApiKey());
 
     auto saveBtn = keyRow->makeChild<Ling::Button>();
     saveBtn->setText(L"保存");
+    saveBtn->setColor(settingsText());
+    saveBtn->setHoverColor(settingsText());
     saveBtn->setSize(52.f, 30.f);
     saveBtn->setFontSize(12.f);
     saveBtn->setMarginLeft(8.f);
-    saveBtn->setBorder(1.f, 0xD8D8D8FF);
+    saveBtn->setBorder(1.f, settingsBorder());
     saveBtn->setBorderRadius(4.f);
-    saveBtn->setHoverBg(0xF2F2F2FF);
+    saveBtn->setHoverBg(settingsHover());
     saveBtn->onClick.add([this](Ling::Button*) {
         if (!geminiApiKeyBox || !geminiModelBox) return;
         Setting::get()->setGeminiApiKey(geminiApiKeyBox->getText());
@@ -152,6 +180,7 @@ void WinSettingCommon::initGeminiCtrls()
 
     auto modelLabel = modelRow->makeChild<Ling::Label>();
     modelLabel->setText(L"Gemini 模型");
+    modelLabel->setColor(settingsText());
     modelLabel->setHeightPercent(100.f);
     modelLabel->setJustifyContent(Ling::Justify::Center);
     modelLabel->setFlexGrow(1.f);
@@ -160,19 +189,24 @@ void WinSettingCommon::initGeminiCtrls()
     geminiModelBox->setSize(230.f, 30.f);
     geminiModelBox->setPadding(6.f);
     geminiModelBox->setFontSize(12.f);
-    geminiModelBox->setBg(0xFFFFFFFF);
-    geminiModelBox->setBorder(1.f, 0xD8D8D8FF);
+    geminiModelBox->setBg(settingsSurface());
+    geminiModelBox->setBorder(1.f, settingsBorder());
     geminiModelBox->setBorderRadius(4.f);
+    geminiModelBox->setColor(settingsText());
+    geminiModelBox->setCaretColor(settingsText());
+    geminiModelBox->setSelectionBgColor(settingsDarkMode() ? 0x596EF766 : 0x99C9EF99);
     geminiModelBox->setText(Setting::get()->getGeminiModel());
 
     auto testBtn = modelRow->makeChild<Ling::Button>();
     testBtn->setText(L"测试连接");
+    testBtn->setColor(settingsText());
+    testBtn->setHoverColor(settingsText());
     testBtn->setSize(76.f, 30.f);
     testBtn->setFontSize(12.f);
     testBtn->setMarginLeft(8.f);
-    testBtn->setBorder(1.f, 0xD8D8D8FF);
+    testBtn->setBorder(1.f, settingsBorder());
     testBtn->setBorderRadius(4.f);
-    testBtn->setHoverBg(0xF2F2F2FF);
+    testBtn->setHoverBg(settingsHover());
     testBtn->onClick.add([this](Ling::Button*) {
         if (!geminiApiKeyBox || !geminiModelBox) return;
         auto apiKey = geminiApiKeyBox->getText();
@@ -194,12 +228,12 @@ void WinSettingCommon::initGeminiCtrls()
     geminiStatus->setHeight(28.f);
     geminiStatus->setWidthPercent(100.f);
     geminiStatus->setFontSize(11.f);
-    geminiStatus->setColor(0x777777FF);
+    geminiStatus->setColor(settingsMuted());
     geminiStatus->setText(L"翻译功能使用此 API Key；程序不会把 Key 写入源码。默认模型 gemini-3.7-flash");
 
     auto border = makeChild<Ling::Node>();
     border->setHeight(1.f);
-    border->setBg(0xE0E0E0FF);
+    border->setBg(settingsBorder());
 }
 
 void WinSettingCommon::initLangCtrls()
@@ -211,6 +245,7 @@ void WinSettingCommon::initLangCtrls()
 
     auto label = box->makeChild<Ling::Label>();
     label->setText(Lang::get(L"setting.language"));
+    label->setColor(settingsText());
     label->setHeightPercent(100.f);
     label->setJustifyContent(Ling::Justify::Center);
     label->setFlexGrow(1.f);
@@ -227,17 +262,20 @@ void WinSettingCommon::initLangCtrls()
     }
     selectBtn = box->makeChild<Ling::Button>();
     selectBtn->setText(langName);
+    selectBtn->setColor(settingsText());
+    selectBtn->setHoverColor(settingsText());
+    selectBtn->setBg(settingsDarkMode() ? settingsSurface() : 0x00000000);
     selectBtn->setHeight(28.f);
     selectBtn->setWidth(160.f);
-    selectBtn->setBorder(1.f, 0xE0E0E0FF);
-    selectBtn->setHoverBg(0XFFFFFFFF);
+    selectBtn->setBorder(1.f, settingsBorder());
+    selectBtn->setHoverBg(settingsSurface());
     selectBtn->onClick.add([this](Ling::Button* btn) {
         if (selectBox) return;
         this->showSelectBox(btn);
         });
     auto border = makeChild<Ling::Node>();
     border->setHeight(1.f);
-    border->setBg(0xE0E0E0FF);
+    border->setBg(settingsBorder());
 }
 
 void WinSettingCommon::setAutoStartBtn(Ling::Button* btn)
@@ -252,8 +290,8 @@ void WinSettingCommon::setAutoStartBtn(Ling::Button* btn)
     else
     {
         btn->setText(L"\ue687");
-        btn->setColor(0x666666FF);
-        btn->setHoverColor(0x666666FF);
+        btn->setColor(settingsDarkMode() ? 0xAEB2B9FF : 0x666666FF);
+        btn->setHoverColor(settingsDarkMode() ? 0xAEB2B9FF : 0x666666FF);
     }
 }
 
@@ -289,16 +327,17 @@ void WinSettingCommon::showSelectBox(Ling::Button* btn)
     selectBox->setPositionType(Ling::Position::Absolute);
     selectBox->setPosition(Ling::Edge::Left, btn->x/win->dpi);
     selectBox->setPosition(Ling::Edge::Top, btn->y/win->dpi);
-    selectBox->setBg(0xFFFFFFFF);
-    selectBox->setBorder(1.f, 0x597ef766);
+    selectBox->setBg(settingsSurface());
+    selectBox->setBorder(1.f, settingsDarkMode() ? 0x596EF7AA : 0x597ef766);
     for (auto& pair:langs)
     {
         auto itemBtn = selectBox->makeChild<Ling::Button>();
         itemBtn->setText(pair.first);
+        itemBtn->setColor(settingsText());
+        itemBtn->setHoverColor(settingsText());
         itemBtn->setHeight(itemH);
         itemBtn->setWidthPercent(100.f);
-        itemBtn->setHoverBg(0Xf2f2f2FF);
-        itemBtn->setHoverColor(0X000000FF);
+        itemBtn->setHoverBg(settingsHover());
         itemBtn->onClick.add([this](Ling::Button* itemBtn) {
             auto lang = Lang::get();
             auto langName = itemBtn->getText();
@@ -318,10 +357,11 @@ void WinSettingCommon::showSelectBox(Ling::Button* btn)
     }
     auto lastItem = selectBox->makeChild<Ling::Button>();
     lastItem->setText(Lang::get(L"setting.getMoreLang"));
+    lastItem->setColor(settingsText());
+    lastItem->setHoverColor(settingsText());
     lastItem->setHeight(itemH);
     lastItem->setWidthPercent(100.f);
-    lastItem->setHoverBg(0Xf2f2f2FF);
-    lastItem->setHoverColor(0X000000FF);
+    lastItem->setHoverBg(settingsHover());
     lastItem->onClick.add([this](Ling::Button* btn) {
         win->onMouseDown.remove(onMouseDownToken);
         std::wstring downloadUrl{ L"https://github.com/axing1218-source" };
