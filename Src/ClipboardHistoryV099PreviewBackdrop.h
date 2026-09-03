@@ -15,10 +15,10 @@ namespace ClipboardHistoryV099PreviewBackdrop
 
     inline BYTE overlayAlpha()
     {
-        // Light mode needs more separation because both the clipboard and preview
-        // are predominantly white. Dark mode already has natural contrast, so keep
-        // the dimming a little softer there.
-        return ClipboardHistory::v099DarkMode() ? (BYTE)40 : (BYTE)52;
+        // Light mode needs stronger separation because both layers are mostly white.
+        // Dark mode already has more natural depth, so keep it a little softer.
+        // LWA_ALPHA is opacity of the black overlay: 77 ~= 30%, 56 ~= 22%.
+        return ClipboardHistory::v099DarkMode() ? (BYTE)56 : (BYTE)77;
     }
 
     inline bool isPreviewWindow(HWND hwnd)
