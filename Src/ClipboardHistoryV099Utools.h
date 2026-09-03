@@ -40,4 +40,11 @@ namespace ClipboardHistory
 #include "ClipboardHistoryV099Stable.h"
 #include "ClipboardHistoryV099PointerFix.h"
 #include "ClipboardHistoryV099FinalFix.h"
+
+// File preview installs one final ListBox subclass after the pointer/stability
+// layers. Keep its predecessor proc in this namespace-wide slot.
+namespace ClipboardHistoryV099FilePreview
+{
+    inline WNDPROC listBase{ nullptr };
+}
 #include "ClipboardHistoryV099FilePreview.h"
