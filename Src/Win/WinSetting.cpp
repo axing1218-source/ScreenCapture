@@ -27,7 +27,6 @@ namespace {
 	{
 		if (!node) return;
 		node->setBg(pageBg());
-		node->setColor(normalText());
 	}
 }
 
@@ -71,11 +70,9 @@ void WinSetting::onCreated()
 {
 	enableShadow();
 	body->setBg(pageBg());
-	body->setColor(normalText());
 	body->setFlexDirection(Ling::FlexDirection::Row);
 	auto menuBox = body->makeChild<Ling::Node>();
 	menuBox->setBg(sideBg());
-	menuBox->setColor(normalText());
 	menuBox->setWidth(160.f);
 	menuBox->setHeightPercent(100.f);
 	menuBox->setPaddingTop(40.f);
