@@ -20,8 +20,28 @@
 #include "Setting.h"
 #include "GeminiClient.h"
 #include "GeminiClientHybridGeometry.h"
+#include "StarCapTranslationLanguage.h"
 #include "StarCapTextGeometry.h"
 #include "StarCapParagraphLayout.h"
+
+namespace GeminiClient
+{
+    inline TranslationResult translateImageStarCapTarget(
+        const std::vector<BYTE>& pixels, int width, int height,
+        const std::wstring& apiKey, const std::wstring& model)
+    {
+        return translateImage(pixels, width, height, apiKey, model,
+            StarCapTranslationLanguage::activePrompt());
+    }
+
+    inline TranslationResult translateOcrBlocksStarCapTarget(
+        const std::vector<OcrBlock>& sourceBlocks,
+        const std::wstring& apiKey, const std::wstring& model)
+    {
+        return translateOcrBlocks(sourceBlocks, apiKey, model,
+            StarCapTranslationLanguage::activePrompt());
+    }
+}
 
 // V2 is header-only. For this feature branch, substitute two small StarCap wrappers
 // for its Canvas/TextBox members and expose only V2's own private implementation to the
@@ -32,7 +52,12 @@
 //   Gemini       -> authoritative recognized text
 //   Windows OCR  -> real word BoundingRect geometry only
 // This avoids relying on Gemini box_2d for precise text selection.
+//
+// Translation keeps V2's existing rendering/layout path, but the target language is
+// supplied by StarCap's per-window selector (falling back to the persistent default).
 #define recognizeImage recognizeImageHybrid
+#define translateImage translateImageStarCapTarget
+#define translateOcrBlocks translateOcrBlocksStarCapTarget
 #define TextBox StarCapOcrLinkedTextBox
 #define Canvas StarCapOcrLinkedCanvas
 #define private public
@@ -40,9 +65,12 @@
 #undef private
 #undef Canvas
 #undef TextBox
+#undef translateOcrBlocks
+#undef translateImage
 #undef recognizeImage
 
 #include "StarCapOcrLinkedSelection.h"
+#include "StarCapOcrTranslationLanguageUI.h"
 
 namespace StarCapOcr
 {
@@ -60,14 +88,18 @@ namespace StarCapOcr
     {
         // Keep the same repeated-launch protection used by normal screenshot OCR.
         if (StarCapOcrV2::activeWindow) StarCapOcrV2::activeWindow->close();
+        StarCapTranslationLanguage::resetSessionToDefault();
         StarCapOcrV2::showPixels(std::move(pixels), width, height, fromLongScreenshot);
+        StarCapOcrTranslationLanguageUI::attach(StarCapOcrV2::activeWindow);
         StarCapOcrLinkedSelection::attach(StarCapOcrV2::activeWindow);
     }
 
     inline void showTranslationPixels(std::vector<BYTE> pixels, int width, int height, bool fromLongScreenshot = false)
     {
         if (StarCapOcrV2::activeWindow) StarCapOcrV2::activeWindow->close();
+        StarCapTranslationLanguage::resetSessionToDefault();
         StarCapOcrV2::showTranslationPixels(std::move(pixels), width, height, fromLongScreenshot);
+        StarCapOcrTranslationLanguageUI::attach(StarCapOcrV2::activeWindow);
         StarCapOcrLinkedSelection::attach(StarCapOcrV2::activeWindow);
     }
 
@@ -76,7 +108,9 @@ namespace StarCapOcr
         // Close an older result window before the new request receives its request id.
         // Otherwise the old window's onDestroy invalidates the freshly-created OCR request.
         if (StarCapOcrV2::activeWindow) StarCapOcrV2::activeWindow->close();
+        StarCapTranslationLanguage::resetSessionToDefault();
         StarCapOcrV2::show(win);
+        StarCapOcrTranslationLanguageUI::attach(StarCapOcrV2::activeWindow);
         StarCapOcrLinkedSelection::attach(StarCapOcrV2::activeWindow);
     }
 }
