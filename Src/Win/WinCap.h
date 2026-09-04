@@ -9,6 +9,7 @@ class CapVideo;
 // 选区可以继续调整，选区右下方摆一个 ToolCap，长图和录屏都挂在它身上。
 class WinCap:public Ling::WinBase
 {
+	friend class CutMask;
 public:
 	~WinCap();
 	static void init();
