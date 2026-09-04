@@ -232,11 +232,12 @@ namespace GeminiClientHybridGeometry
     }
 }
 
-// This unqualified forwarding name is intentionally provided for the feature-branch
-// preprocessor substitution around StarCapOcrV2.h.
-inline GeminiClient::OcrResult recognizeImageHybrid(
-    const std::vector<BYTE>& pixels, int width, int height,
-    const std::wstring& apiKey, const std::wstring& model)
+namespace GeminiClient
 {
-    return GeminiClientHybridGeometry::recognizeImageHybrid(pixels, width, height, apiKey, model);
+    inline OcrResult recognizeImageHybrid(
+        const std::vector<BYTE>& pixels, int width, int height,
+        const std::wstring& apiKey, const std::wstring& model)
+    {
+        return GeminiClientHybridGeometry::recognizeImageHybrid(pixels, width, height, apiKey, model);
+    }
 }
