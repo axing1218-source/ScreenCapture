@@ -1,4 +1,4 @@
-﻿#include "pch.h"
+#include "pch.h"
 #include <include/Ling.h>
 #include "CapLong.h"
 #include "WinCap.h"
@@ -15,9 +15,10 @@ namespace {
     constexpr UINT scrollEndMsgId = 19;
     constexpr UINT manualCaptureMsgId = 20;
     constexpr int comparisonH = 100;
-    constexpr int maxDismissTime = 8;
-    constexpr int scrollSettleMs = 250;
-    constexpr int settleRecheckMs = 250;
+    constexpr int maxDismissTime = 3;
+    constexpr int autoScrollDelayMs = 120;
+    constexpr int scrollSettleMs = 200;
+    constexpr int settleRecheckMs = 180;
     constexpr int maxSettleRecheck = 2;
     constexpr int manualPollMs = 120;
     constexpr double bottomMatchMinRatio = 0.9;
@@ -230,7 +231,7 @@ void CapLong::capStep()
 {
     auto data = Util::captureScreen(capStartPos.x, capStartPos.y, imgW, imgH);
     if (data.empty()) {
-        if (autoScroll) win->setTimer(500, scrollMsgId);
+        if (autoScroll) win->setTimer(autoScrollDelayMs, scrollMsgId);
         else scheduleNextCapture(manualPollMs);
         return;
     }
@@ -250,7 +251,7 @@ void CapLong::capStep()
         if (changeStartY == -1) {
             if (autoScroll) {
                 if (++dismissTime > maxDismissTime) { stopCap(); return; }
-                win->setTimer(500, scrollMsgId);
+                win->setTimer(autoScrollDelayMs, scrollMsgId);
             }
             else {
                 scheduleNextCapture(manualPollMs);
@@ -263,7 +264,7 @@ void CapLong::capStep()
     int rowPix{ imgW * 4 };
     int stripH = std::min(comparisonH, imgH - changeStartY);
     if (stripH <= 0) {
-        if (autoScroll) win->setTimer(500, scrollMsgId);
+        if (autoScroll) win->setTimer(autoScrollDelayMs, scrollMsgId);
         else scheduleNextCapture(manualPollMs);
         return;
     }
@@ -288,7 +289,7 @@ void CapLong::capStep()
         settleRecheckCount = 0;
         if (autoScroll) {
             if (++dismissTime > maxDismissTime) { stopCap(); return; }
-            win->setTimer(500, scrollMsgId);
+            win->setTimer(autoScrollDelayMs, scrollMsgId);
         }
         else {
             // Manual mode never decides that the user is "done" merely because they paused.
@@ -302,7 +303,7 @@ void CapLong::capStep()
     int paintStart = resultH - (imgH - y - changeStartY);
     int newResultH = paintStart + (imgH - changeStartY);
     if (paintStart < 0 || newResultH <= 0) {
-        if (autoScroll) win->setTimer(500, scrollMsgId);
+        if (autoScroll) win->setTimer(autoScrollDelayMs, scrollMsgId);
         else scheduleNextCapture(manualPollMs);
         return;
     }
@@ -320,7 +321,7 @@ void CapLong::capStep()
     if (resultH > 36000) { stopCap(); return; }
     makeImgPreview();
     win->refresh();
-    if (autoScroll) win->setTimer(500, scrollMsgId);
+    if (autoScroll) win->setTimer(autoScrollDelayMs, scrollMsgId);
     else scheduleNextCapture(manualPollMs);
 }
 
@@ -418,12 +419,14 @@ void CapLong::makeStopText()
 void CapLong::copyToClipboard()
 {
     if (imgData.empty()) return;
+    if (!isFinish) stopCap();
     Util::saveToClipboard(imgW, resultH, imgData.data());
 }
 
 bool CapLong::saveToFile()
 {
     if (imgData.empty()) return false;
+    if (!isFinish) stopCap();
     auto path = Util::getSaveFilePath(win->hwnd);
     if (path.empty()) return false;
     return Util::saveToFile(path, imgW, resultH, imgData.data());
@@ -432,6 +435,7 @@ bool CapLong::saveToFile()
 void CapLong::pin()
 {
     if (imgData.empty()) return;
+    if (!isFinish) stopCap();
     auto monitor = MonitorFromPoint({ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
     MONITORINFO mi{ sizeof(MONITORINFO) };
     GetMonitorInfo(monitor, &mi);
