@@ -6,18 +6,13 @@
 
 namespace StarCapOcrTranslationLanguageUI
 {
-    // The source image and the translated image serve different purposes:
-    //   - source image: precise Windows-OCR geometry and linked selection
-    //   - translated image: readable visual translation
-    // Do not make translated paragraph rectangles pretend to be word geometry.  A
-    // dedicated composition child sits above the source canvas while translation is
-    // visible, paints a clean #FEFEFE surface and the translated blocks, and temporarily
-    // suspends image<->text linked selection. Switching back to the source restores it.
+    // Translated screenshot content is rendered on a clean #FEFEFE surface above the
+    // source image.  This prevents original glyphs leaking through gaps between Gemini's
+    // translated paragraph regions, especially for dense Chinese output.
     class TranslationSurfaceOverlay final : public Ling::Canvas
     {
     public:
         explicit TranslationSurfaceOverlay(Ling::WinBase* win) : Ling::Canvas(win) {}
-
         void setOwner(StarCapOcrV2::OcrResultWindow* value) { owner = value; }
 
     protected:
@@ -28,24 +23,6 @@ namespace StarCapOcrTranslationLanguageUI
         }
 
     private:
-        void suspendLinkedSelection(bool suspend)
-        {
-            if (!owner) return;
-            if (suspend) {
-                if (StarCapOcrLinkedSelection::activeBridgeWindow == owner) {
-                    StarCapOcrLinkedSelection::activeBridge = nullptr;
-                    StarCapOcrLinkedSelection::activeBridgeWindow = nullptr;
-                }
-            }
-            else if (!StarCapOcrLinkedSelection::activeBridge &&
-                StarCapOcrLinkedSelection::bridgeOwner &&
-                StarCapOcrV2::activeWindow == owner) {
-                StarCapOcrLinkedSelection::activeBridgeWindow = owner;
-                StarCapOcrLinkedSelection::activeBridge =
-                    StarCapOcrLinkedSelection::bridgeOwner.get();
-            }
-        }
-
         void repaint()
         {
             auto* ctx = startPaint();
@@ -55,8 +32,6 @@ namespace StarCapOcrTranslationLanguageUI
             const bool translated = owner && owner->translationReady &&
                 owner->showTranslatedImage && !owner->translating &&
                 owner->imageW > 0 && owner->imageH > 0;
-            suspendLinkedSelection(translated);
-
             if (translated) {
                 const float scale = owner->getImageScale();
                 const float dw = owner->imageW * scale;
@@ -69,9 +44,6 @@ namespace StarCapOcrTranslationLanguageUI
                 constexpr float c = 254.f / 255.f;
                 ctx->CreateSolidColorBrush(D2D1::ColorF(c, c, c, 1.f), bg.GetAddressOf());
                 if (bg) ctx->FillRectangle(dest, bg.Get());
-
-                // Reuse the established StarCap paragraph renderer, but on a fully clean
-                // surface. Source glyphs can no longer leak between/around Chinese blocks.
                 owner->paintTranslationBlocks(ctx, dest);
             }
             finishPaint();
@@ -95,8 +67,8 @@ namespace StarCapOcrTranslationLanguageUI
             if (!owner || !owner->translateBtn || !owner->translateBtn->parent) return;
             auto* row = owner->translateBtn->parent;
 
-            // The single Translate/Source button already toggles both states.  Keep the
-            // toolbar compact and remove the redundant source/translation tabs.
+            // The existing Translate/Source button already toggles the two states, so the
+            // separate source/translation tabs are redundant and stay hidden.
             if (owner->originalTab) {
                 owner->originalTab->hide();
                 owner->originalTab = nullptr;
@@ -182,9 +154,9 @@ namespace StarCapOcrTranslationLanguageUI
             StarCapTranslationLanguage::sessionIndex = StarCapTranslationLanguage::clampIndex(selected);
             targetBtn->setText(StarCapTranslationLanguage::label(selected) + L"  ▾");
 
-            // A target-language change is temporary for this OCR window only. If a previous
-            // translation exists, return to the authoritative OCR source and require one new
-            // translation request; never translate a translation into the next language.
+            // A temporary target-language change never mutates the persistent default.
+            // If this window was already translated, discard that result and translate
+            // again from the original OCR/source image instead of chaining translations.
             if (owner->translationReady) {
                 owner->translationReady = false;
                 owner->showTranslatedImage = false;
@@ -230,12 +202,6 @@ namespace StarCapOcrTranslationLanguageUI
         controllerOwner = std::make_unique<Controller>(window);
         activeLanguageWindow = window;
         window->onDestroy.add([window]() {
-            // If the window is closed while the translated overlay has suspended linked
-            // selection, release the bridge explicitly so it never retains the dying owner.
-            if (!StarCapOcrLinkedSelection::activeBridgeWindow &&
-                StarCapOcrLinkedSelection::bridgeOwner) {
-                StarCapOcrLinkedSelection::detach();
-            }
             if (activeLanguageWindow == window) detach(window);
         });
     }
