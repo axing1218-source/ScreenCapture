@@ -11,6 +11,24 @@ public:
 protected:
 	void layout() override
 	{
+		// Gemini can return very long English API errors (notably HTTP 503 high-demand
+		// messages). Ling::Label is single-line and its intrinsic text width can push
+		// the settings controls off the right edge. Compact known errors before Yoga
+		// measures this panel, and cap unknown errors as a final layout guard.
+		if (geminiStatus) {
+			auto text = geminiStatus->getText();
+			std::wstring compact;
+			if (text.find(L"HTTP 503") != std::wstring::npos)
+				compact = L"连接失败（HTTP 503）：模型当前繁忙，请稍后重试或切换模型";
+			else if (text.find(L"HTTP 429") != std::wstring::npos)
+				compact = L"连接失败（HTTP 429）：请求过多或额度受限，请稍后重试";
+			else if (text.find(L"HTTP 403") != std::wstring::npos)
+				compact = L"连接失败（HTTP 403）：API Key 或项目权限受限";
+			else if (text.size() > 82)
+				compact = text.substr(0, 79) + L"...";
+			if (!compact.empty() && compact != text) geminiStatus->setText(compact);
+		}
+
 		// Never mutate the Yoga/UI tree while Node::layout() is walking it.  The
 		// previous test build inserted the translation-language row synchronously
 		// here, which could invalidate the active layout traversal and crash as soon
