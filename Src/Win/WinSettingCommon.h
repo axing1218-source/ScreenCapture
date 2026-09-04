@@ -11,9 +11,19 @@ public:
 protected:
 	void layout() override
 	{
+		// Never mutate the Yoga/UI tree while Node::layout() is walking it.  The
+		// previous test build inserted the translation-language row synchronously
+		// here, which could invalidate the active layout traversal and crash as soon
+		// as Settings opened.  Queue the one-time injection for the next UI turn.
 		if (!translationLanguageInjected) {
 			translationLanguageInjected = true;
-			StarCapTranslationLanguageSettings::attach(this);
+			auto weakThis = getWeakThis();
+			auto* self = this;
+			Ling::App::get()->dq.TryEnqueue([self, weakThis]() {
+				if (!weakThis.lock()) return;
+				StarCapTranslationLanguageSettings::attach(self);
+				if (self->win) self->win->refresh();
+			});
 		}
 		Ling::Node::layout();
 	}
