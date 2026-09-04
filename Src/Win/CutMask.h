@@ -1,4 +1,5 @@
 #pragma once
+#include <array>
 #include <include/Ling.h>
 
 // 光标落在哪一块。Inside 是选区内部；8 个方向对应四角和四边中点控制柄。
