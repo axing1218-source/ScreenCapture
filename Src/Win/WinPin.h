@@ -6,8 +6,10 @@ class ToolSub;
 class ShapeBase;
 class ShapeText;
 class History;
+struct StarCapPinTransform;
 class WinPin : public Ling::WinBase
 {
+	friend struct StarCapPinTransform;
 public:
 	~WinPin();
 	static void init(int x, int y, int w, int h);
