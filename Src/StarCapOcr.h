@@ -19,19 +19,20 @@
 #include "Util.h"
 #include "Setting.h"
 #include "GeminiClient.h"
-#include "GeminiClientSelection.h"
+#include "GeminiClientHybridGeometry.h"
 #include "StarCapTextGeometry.h"
 #include "StarCapParagraphLayout.h"
 
-// V2 is header-only.  For this feature branch, substitute two small StarCap wrappers
+// V2 is header-only. For this feature branch, substitute two small StarCap wrappers
 // for its Canvas/TextBox members and expose only V2's own private implementation to the
-// bridge.  All dependencies above were included before the macros, so their definitions
+// bridge. All dependencies above were included before the macros, so their definitions
 // and ABI are untouched.
 //
-// Route only this test build's OCR entry point through the fine-grained Gemini request.
-// The normal GeminiClient implementation remains untouched, so translation and stable
-// builds keep their existing behavior.
-#define recognizeImage recognizeImageSelection
+// The OCR entry point is also substituted with a hybrid implementation:
+//   Gemini       -> authoritative recognized text
+//   Windows OCR  -> real word BoundingRect geometry only
+// This avoids relying on Gemini box_2d for precise text selection.
+#define recognizeImage recognizeImageHybrid
 #define TextBox StarCapOcrLinkedTextBox
 #define Canvas StarCapOcrLinkedCanvas
 #define private public
@@ -79,4 +80,3 @@ namespace StarCapOcr
         StarCapOcrLinkedSelection::attach(StarCapOcrV2::activeWindow);
     }
 }
-
