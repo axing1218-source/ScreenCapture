@@ -19,6 +19,7 @@
 #include "Util.h"
 #include "Setting.h"
 #include "GeminiClient.h"
+#include "GeminiClientSelection.h"
 #include "StarCapTextGeometry.h"
 #include "StarCapParagraphLayout.h"
 
@@ -26,6 +27,11 @@
 // for its Canvas/TextBox members and expose only V2's own private implementation to the
 // bridge.  All dependencies above were included before the macros, so their definitions
 // and ABI are untouched.
+//
+// Route only this test build's OCR entry point through the fine-grained Gemini request.
+// The normal GeminiClient implementation remains untouched, so translation and stable
+// builds keep their existing behavior.
+#define recognizeImage recognizeImageSelection
 #define TextBox StarCapOcrLinkedTextBox
 #define Canvas StarCapOcrLinkedCanvas
 #define private public
@@ -33,6 +39,7 @@
 #undef private
 #undef Canvas
 #undef TextBox
+#undef recognizeImage
 
 #include "StarCapOcrLinkedSelection.h"
 
