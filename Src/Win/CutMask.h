@@ -9,8 +9,8 @@ enum class MaskHit { None, Inside, Left, Top, Right, Bottom, TopLeft, TopRight, 
 // 截图遮罩与截图阶段辅助 UI。
 // 交互按 Snipaste 的截图阶段重新整理：
 // - 自动吸附窗口，并可用 Tab 切到 UI 元素检测；
-// - 选区左上角只显示宽高；
-// - 鼠标右下显示像素放大镜、坐标和 RGB/HEX 取色；
+// - 尺寸标签只显示在选区外，外部无空间时隐藏；
+// - 鼠标在选区内时，于右下显示像素放大镜、坐标和 RGB/HEX 取色；
 // - 左下角按截图阶段显示完整/精简快捷键提示；
 // - 选区保留 8 个可拖动控制点。
 class CutMask
@@ -51,7 +51,7 @@ private:
 	void suppressLegacyMagnifier(ID2D1DeviceContext* ctx);
 	COLORREF sampleCapturedPixel(POINT pos);
 	std::wstring colorText(COLORREF color) const;
-	void copyCurrentColor();
+	bool copyCurrentColor();
 	void handleCaptureKey(UINT key);
 	void moveCursorBy(int dx, int dy);
 	void useCurrentScreenOrFull();
@@ -67,6 +67,8 @@ private:
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushHandleOutline;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushPanelBg;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushPanelBorder;
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushHelpBg;
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushLabelBg;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushKeyBorder;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushAccentSoft;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushCenterBorder;
