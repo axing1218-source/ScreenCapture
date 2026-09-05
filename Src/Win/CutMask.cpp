@@ -618,22 +618,27 @@ void CutMask::paintMagnifierPanel(ID2D1DeviceContext* ctx, POINT live, float lef
     const float crossHalf = crossThickness * .5f;
     const float cellCenterX = cx + cellW * .5f;
     const float cellCenterY = cy + cellH * .5f;
-    ctx->FillRectangle(D2D1::RectF(left, cellCenterY - crossHalf, left + panelW, cellCenterY + crossHalf), brushAccentSoft.Get());
-    ctx->FillRectangle(D2D1::RectF(cellCenterX - crossHalf, top, cellCenterX + crossHalf, top + imageH), brushAccentSoft.Get());
 
-    // The black frame must coincide exactly with the blue square formed by the
-    // cross intersection. Build the frame from four filled bars instead of
-    // DrawRectangle so every side has the exact same thickness and no side
-    // receives different stroke rasterization.
-    const float outlineThickness = std::max(.9f, 1.35f * scale);
-    const float squareL = cellCenterX - crossHalf;
-    const float squareT = cellCenterY - crossHalf;
-    const float squareR = cellCenterX + crossHalf;
-    const float squareB = cellCenterY + crossHalf;
-    ctx->FillRectangle(D2D1::RectF(squareL, squareT, squareR, squareT + outlineThickness), brushCenterBorder.Get());
-    ctx->FillRectangle(D2D1::RectF(squareL, squareB - outlineThickness, squareR, squareB), brushCenterBorder.Get());
-    ctx->FillRectangle(D2D1::RectF(squareL, squareT + outlineThickness, squareL + outlineThickness, squareB - outlineThickness), brushCenterBorder.Get());
-    ctx->FillRectangle(D2D1::RectF(squareR - outlineThickness, squareT + outlineThickness, squareR, squareB - outlineThickness), brushCenterBorder.Get());
+    // Match the Snipaste reference: the center target is one complete magnified
+    // source pixel cell. The blue cross stops at that cell instead of painting
+    // through it, so the current pixel remains visible inside the frame.
+    const float frameL = std::round(cx);
+    const float frameT = std::round(cy);
+    const float frameR = std::round(cx + cellW);
+    const float frameB = std::round(cy + cellH);
+    ctx->FillRectangle(D2D1::RectF(left, cellCenterY - crossHalf, frameL, cellCenterY + crossHalf), brushAccentSoft.Get());
+    ctx->FillRectangle(D2D1::RectF(frameR, cellCenterY - crossHalf, left + panelW, cellCenterY + crossHalf), brushAccentSoft.Get());
+    ctx->FillRectangle(D2D1::RectF(cellCenterX - crossHalf, top, cellCenterX + crossHalf, frameT), brushAccentSoft.Get());
+    ctx->FillRectangle(D2D1::RectF(cellCenterX - crossHalf, frameB, cellCenterX + crossHalf, top + imageH), brushAccentSoft.Get());
+
+    // Pure black, one physical pixel, hard edged. Four filled bars avoid the
+    // asymmetric rasterization that DrawRectangle can produce at fractional
+    // coordinates. The border sits at the outside of the center target cell.
+    const float outlineThickness = 1.f;
+    ctx->FillRectangle(D2D1::RectF(frameL, frameT, frameR, frameT + outlineThickness), brushCenterBorder.Get());
+    ctx->FillRectangle(D2D1::RectF(frameL, frameB - outlineThickness, frameR, frameB), brushCenterBorder.Get());
+    ctx->FillRectangle(D2D1::RectF(frameL, frameT + outlineThickness, frameL + outlineThickness, frameB - outlineThickness), brushCenterBorder.Get());
+    ctx->FillRectangle(D2D1::RectF(frameR - outlineThickness, frameT + outlineThickness, frameR, frameB - outlineThickness), brushCenterBorder.Get());
     ctx->SetAntialiasMode(oldAA);
 
     ctx->DrawRectangle(imageRect, brushPanelBorder.Get(), std::max(1.f, scale));
