@@ -621,8 +621,19 @@ void CutMask::paintMagnifierPanel(ID2D1DeviceContext* ctx, POINT live, float lef
     ctx->FillRectangle(D2D1::RectF(left, cellCenterY - crossHalf, left + panelW, cellCenterY + crossHalf), brushAccentSoft.Get());
     ctx->FillRectangle(D2D1::RectF(cellCenterX - crossHalf, top, cellCenterX + crossHalf, top + imageH), brushAccentSoft.Get());
 
-    const auto centerCell = D2D1::RectF(cx, cy, cx + cellW, cy + cellH);
-    ctx->DrawRectangle(centerCell, brushCenterBorder.Get(), std::max(.9f, 1.35f * scale));
+    // The black frame must coincide exactly with the blue square formed by the
+    // cross intersection. Build the frame from four filled bars instead of
+    // DrawRectangle so every side has the exact same thickness and no side
+    // receives different stroke rasterization.
+    const float outlineThickness = std::max(.9f, 1.35f * scale);
+    const float squareL = cellCenterX - crossHalf;
+    const float squareT = cellCenterY - crossHalf;
+    const float squareR = cellCenterX + crossHalf;
+    const float squareB = cellCenterY + crossHalf;
+    ctx->FillRectangle(D2D1::RectF(squareL, squareT, squareR, squareT + outlineThickness), brushCenterBorder.Get());
+    ctx->FillRectangle(D2D1::RectF(squareL, squareB - outlineThickness, squareR, squareB), brushCenterBorder.Get());
+    ctx->FillRectangle(D2D1::RectF(squareL, squareT + outlineThickness, squareL + outlineThickness, squareB - outlineThickness), brushCenterBorder.Get());
+    ctx->FillRectangle(D2D1::RectF(squareR - outlineThickness, squareT + outlineThickness, squareR, squareB - outlineThickness), brushCenterBorder.Get());
     ctx->SetAntialiasMode(oldAA);
 
     ctx->DrawRectangle(imageRect, brushPanelBorder.Get(), std::max(1.f, scale));
