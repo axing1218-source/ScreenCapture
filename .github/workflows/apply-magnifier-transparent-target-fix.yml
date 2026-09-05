@@ -1,0 +1,52 @@
+name: Apply Magnifier Transparent Target Fix
+
+on:
+  push:
+    branches:
+      - feature/snipaste-capture-ux
+    paths:
+      - .github/workflows/apply-magnifier-transparent-target-fix.yml
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/snipaste-capture-ux
+          fetch-depth: 0
+      - name: Patch transparent center target
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('Src/Win/CutMask.cpp')
+          text = path.read_text(encoding='utf-8')
+          old = '''    // Match the Snipaste reference: the center target is one complete magnified\n    // source pixel cell. The blue cross stops at that cell instead of painting\n    // through it, so the current pixel remains visible inside the frame.\n    const float frameL = std::round(cx);\n    const float frameT = std::round(cy);\n    const float frameR = std::round(cx + cellW);\n    const float frameB = std::round(cy + cellH);\n    ctx->FillRectangle(D2D1::RectF(left, cellCenterY - crossHalf, frameL, cellCenterY + crossHalf), brushAccentSoft.Get());\n    ctx->FillRectangle(D2D1::RectF(frameR, cellCenterY - crossHalf, left + panelW, cellCenterY + crossHalf), brushAccentSoft.Get());\n    ctx->FillRectangle(D2D1::RectF(cellCenterX - crossHalf, top, cellCenterX + crossHalf, frameT), brushAccentSoft.Get());\n    ctx->FillRectangle(D2D1::RectF(cellCenterX - crossHalf, frameB, cellCenterX + crossHalf, top + imageH), brushAccentSoft.Get());\n\n    // Pure black, one physical pixel, hard edged. Four filled bars avoid the\n    // asymmetric rasterization that DrawRectangle can produce at fractional\n    // coordinates. The border sits at the outside of the center target cell.\n    const float outlineThickness = 1.f;\n    ctx->FillRectangle(D2D1::RectF(frameL, frameT, frameR, frameT + outlineThickness), brushCenterBorder.Get());\n    ctx->FillRectangle(D2D1::RectF(frameL, frameB - outlineThickness, frameR, frameB), brushCenterBorder.Get());\n    ctx->FillRectangle(D2D1::RectF(frameL, frameT + outlineThickness, frameL + outlineThickness, frameB - outlineThickness), brushCenterBorder.Get());\n    ctx->FillRectangle(D2D1::RectF(frameR - outlineThickness, frameT + outlineThickness, frameR, frameB - outlineThickness), brushCenterBorder.Get());\n'''
+          new = '''    // Snipaste-style target: the blue cross stops at a small black frame.\n    // The frame itself is outside the observation area and its interior is\n    // completely transparent, leaving the sampled source pixel unobscured.\n    // At 100% DPI this is an 11x11 outer frame with a 1px hard black border\n    // and a 9x9 transparent center.\n    const float outlineThickness = 1.f;\n    const float frameSize = 11.f * scale;\n    const float frameL = std::round(cellCenterX - frameSize * .5f);\n    const float frameT = std::round(cellCenterY - frameSize * .5f);\n    const float frameR = frameL + frameSize;\n    const float frameB = frameT + frameSize;\n\n    // Cross arms end at the OUTSIDE edge of the black frame; nothing is\n    // painted across the transparent center target.\n    ctx->FillRectangle(D2D1::RectF(left, cellCenterY - crossHalf, frameL, cellCenterY + crossHalf), brushAccentSoft.Get());\n    ctx->FillRectangle(D2D1::RectF(frameR, cellCenterY - crossHalf, left + panelW, cellCenterY + crossHalf), brushAccentSoft.Get());\n    ctx->FillRectangle(D2D1::RectF(cellCenterX - crossHalf, top, cellCenterX + crossHalf, frameT), brushAccentSoft.Get());\n    ctx->FillRectangle(D2D1::RectF(cellCenterX - crossHalf, frameB, cellCenterX + crossHalf, top + imageH), brushAccentSoft.Get());\n\n    // Four equal filled bars guarantee the top/bottom/left/right border has\n    // identical thickness. Do not fill the center.\n    ctx->FillRectangle(D2D1::RectF(frameL, frameT, frameR, frameT + outlineThickness), brushCenterBorder.Get());\n    ctx->FillRectangle(D2D1::RectF(frameL, frameB - outlineThickness, frameR, frameB), brushCenterBorder.Get());\n    ctx->FillRectangle(D2D1::RectF(frameL, frameT + outlineThickness, frameL + outlineThickness, frameB - outlineThickness), brushCenterBorder.Get());\n    ctx->FillRectangle(D2D1::RectF(frameR - outlineThickness, frameT + outlineThickness, frameR, frameB - outlineThickness), brushCenterBorder.Get());\n'''
+          if old not in text:
+              raise SystemExit('Target magnifier block not found; refusing to patch.')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+      - name: Commit source fix
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Src/Win/CutMask.cpp
+          git commit -m "Make magnifier center target transparent"
+          git push origin HEAD:feature/snipaste-capture-ux
+      - name: Build updated feature branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh workflow run starcap-direct-build.yml --ref feature/snipaste-capture-ux
+      - name: Remove temporary workflow
+        shell: bash
+        run: |
+          git pull --rebase origin feature/snipaste-capture-ux
+          git rm .github/workflows/apply-magnifier-transparent-target-fix.yml
+          git commit -m "Remove temporary transparent target patch workflow"
+          git push origin HEAD:feature/snipaste-capture-ux
