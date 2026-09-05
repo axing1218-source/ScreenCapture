@@ -631,6 +631,20 @@ void CutMask::paintMagnifierPanel(ID2D1DeviceContext* ctx, POINT live, float lef
     const float frameR = frameL + frameSize;
     const float frameB = frameT + frameSize;
 
+    // While the user is actively dragging a new capture, keep the top-left
+    // magnifier quadrant fully clear and de-emphasize the other three with a
+    // translucent black layer. The center target and cross bands are excluded
+    // so the sampled pixel remains completely unobscured.
+    if (cap->stage == WinCap::CapStage::Select && cap->isPress) {
+        ComPtr<ID2D1SolidColorBrush> quadrantShade;
+        ctx->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black, .40f), quadrantShade.GetAddressOf());
+        if (quadrantShade) {
+            ctx->FillRectangle(D2D1::RectF(frameR, top, left + panelW, frameT), quadrantShade.Get());
+            ctx->FillRectangle(D2D1::RectF(left, frameB, frameL, top + imageH), quadrantShade.Get());
+            ctx->FillRectangle(D2D1::RectF(frameR, frameB, left + panelW, top + imageH), quadrantShade.Get());
+        }
+    }
+
     // Cross arms end at the OUTSIDE edge of the black frame; nothing is
     // painted across the transparent center target.
     ctx->FillRectangle(D2D1::RectF(left, cellCenterY - crossHalf, frameL, cellCenterY + crossHalf), brushAccentSoft.Get());
@@ -644,9 +658,18 @@ void CutMask::paintMagnifierPanel(ID2D1DeviceContext* ctx, POINT live, float lef
     ctx->FillRectangle(D2D1::RectF(frameL, frameB - outlineThickness, frameR, frameB), brushCenterBorder.Get());
     ctx->FillRectangle(D2D1::RectF(frameL, frameT + outlineThickness, frameL + outlineThickness, frameB - outlineThickness), brushCenterBorder.Get());
     ctx->FillRectangle(D2D1::RectF(frameR - outlineThickness, frameT + outlineThickness, frameR, frameB - outlineThickness), brushCenterBorder.Get());
+    // Give the magnifier image border the same treatment as the center target:
+    // one physical pixel, pure black, hard edged, four equal bars, transparent
+    // interior. This avoids the fuzzy/asymmetric rasterization of DrawRectangle.
+    const float hardBorder = 1.f;
+    auto fillHardFrame = [&](const D2D1_RECT_F& r) {
+        ctx->FillRectangle(D2D1::RectF(r.left, r.top, r.right, r.top + hardBorder), brushCenterBorder.Get());
+        ctx->FillRectangle(D2D1::RectF(r.left, r.bottom - hardBorder, r.right, r.bottom), brushCenterBorder.Get());
+        ctx->FillRectangle(D2D1::RectF(r.left, r.top + hardBorder, r.left + hardBorder, r.bottom - hardBorder), brushCenterBorder.Get());
+        ctx->FillRectangle(D2D1::RectF(r.right - hardBorder, r.top + hardBorder, r.right, r.bottom - hardBorder), brushCenterBorder.Get());
+    };
+    fillHardFrame(imageRect);
     ctx->SetAntialiasMode(oldAA);
-
-    ctx->DrawRectangle(imageRect, brushPanelBorder.Get(), std::max(1.f, scale));
 
     const COLORREF color = sampleCapturedPixel(live);
     auto d2d = Ling::D2D::get();
@@ -673,7 +696,12 @@ void CutMask::paintMagnifierPanel(ID2D1DeviceContext* ctx, POINT live, float lef
     drawLine(colorText(color), infoTop + 32.f * scale, 11.5f, 32.f * scale);
     drawLine(L"C  复制颜色值", infoTop + 60.f * scale, 10.5f);
     drawLine(L"Shift  切换 RGB/HEX", infoTop + 82.f * scale, 10.5f);
-    ctx->DrawRectangle(panelRect, brushPanelBorder.Get(), std::max(1.f, scale));
+
+    // Outer magnifier frame: same 1px pure-black hard-edge construction.
+    const auto oldPanelAA = ctx->GetAntialiasMode();
+    ctx->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+    fillHardFrame(panelRect);
+    ctx->SetAntialiasMode(oldPanelAA);
 }
 
 void CutMask::hideMagnifierPopup()
