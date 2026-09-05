@@ -7,11 +7,11 @@
 enum class MaskHit { None, Inside, Left, Top, Right, Bottom, TopLeft, TopRight, BottomRight, BottomLeft };
 
 // 截图遮罩与截图阶段辅助 UI。
-// 这一版的交互布局按 Snipaste 的思路重新整理：
+// 交互按 Snipaste 的截图阶段重新整理：
 // - 自动吸附窗口，并可用 Tab 切到 UI 元素检测；
 // - 选区左上角只显示宽高；
-// - 光标附近显示像素放大镜、坐标和 RGB/HEX 取色；
-// - 左下角显示截图阶段快捷键提示；
+// - 鼠标右下显示像素放大镜、坐标和 RGB/HEX 取色；
+// - 左下角按截图阶段显示完整/精简快捷键提示；
 // - 选区保留 8 个可拖动控制点。
 class CutMask
 {
@@ -69,7 +69,9 @@ private:
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushPanelBorder;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushKeyBorder;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushAccentSoft;
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushCenterBorder;
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
+	Microsoft::WRL::ComPtr<ID2D1Bitmap1> screenCpuCopy;
 	D2D1_RECT_F layoutRect{};
 	std::vector<WindowCandidate> winRect;
 	POINT pressPos{};
@@ -90,6 +92,7 @@ private:
 	bool fullScreenToggle{ false };
 	bool legacyMagnifierSuppressed{ false };
 	bool initialDetectionDone{ false };
+	bool imeDisabled{ false };
 	size_t historyCursor{ 0 };
 	static constexpr float minSize{ 4.f };
 	static std::vector<D2D1_RECT_F> regionHistory;
