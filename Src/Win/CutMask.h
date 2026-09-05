@@ -1,13 +1,18 @@
 #pragma once
 #include <array>
 #include <include/Ling.h>
+#include <UIAutomation.h>
 
 // 光标落在哪一块。Inside 是选区内部；8 个方向对应四角和四边中点控制柄。
 enum class MaskHit { None, Inside, Left, Top, Right, Bottom, TopLeft, TopRight, BottomRight, BottomLeft };
 
-// 框选遮罩。四块半透明遮罩 + 蓝色边框 + 8 个可拖动控制点 + 尺寸标签。
-// 框选拖动/调整期间还会在光标附近画像素放大镜；使用的是截图开始时缓存的屏幕图，
-// 因此放大镜本身和遮罩永远不会被采样进去。
+// 截图遮罩与截图阶段辅助 UI。
+// 这一版的交互布局按 Snipaste 的思路重新整理：
+// - 自动吸附窗口，并可用 Tab 切到 UI 元素检测；
+// - 选区左上角只显示宽高；
+// - 光标附近显示像素放大镜、坐标和 RGB/HEX 取色；
+// - 左下角显示截图阶段快捷键提示；
+// - 选区保留 8 个可拖动控制点。
 class CutMask
 {
 public:
@@ -27,28 +32,65 @@ public:
 	// 选区定死之后（录屏 / 滚动截图）所有辅助 UI 都隐藏，避免录入内容。
 	bool hideLabel{ false };
 private:
+	struct WindowCandidate
+	{
+		HWND hwnd{ nullptr };
+		D2D1_RECT_F rect{};
+	};
+
 	void initWinRect();
+	D2D1_RECT_F detectRegionAt(POINT pos, HWND* matchedWindow = nullptr);
+	D2D1_RECT_F detectUiElementRect(HWND hwnd, POINT localPos, const D2D1_RECT_F& fallback);
+	D2D1_RECT_F detectNativeChildRect(HWND hwnd, POINT localPos, const D2D1_RECT_F& fallback) const;
+	D2D1_RECT_F monitorRectAt(POINT localPos) const;
+	void applyDetectedRect(const D2D1_RECT_F& rect, bool refreshWindow);
 	void makeLayout();
 	void paintHandles(ID2D1DeviceContext* ctx);
 	void paintMagnifier(ID2D1DeviceContext* ctx);
+	void paintHelp(ID2D1DeviceContext* ctx);
+	void suppressLegacyMagnifier(ID2D1DeviceContext* ctx);
+	COLORREF sampleCapturedPixel(POINT pos);
+	std::wstring colorText(COLORREF color) const;
+	void copyCurrentColor();
+	void handleCaptureKey(UINT key);
+	void moveCursorBy(int dx, int dy);
+	void useCurrentScreenOrFull();
+	void restoreHistory(int direction);
+	void rememberRegion();
 	std::array<std::pair<D2D1_POINT_2F, MaskHit>, 8> handlePoints() const;
+	bool validRect(const D2D1_RECT_F& rect) const;
 private:
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushBg;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushBorder;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushText;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushHandle;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushHandleOutline;
-	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushMagnifierBg;
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushPanelBg;
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushPanelBorder;
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushKeyBorder;
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushAccentSoft;
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
 	D2D1_RECT_F layoutRect{};
-	std::vector<D2D1_RECT_F> winRect;
+	std::vector<WindowCandidate> winRect;
 	POINT pressPos{};
 	POINT cursorPos{ INT_MAX, INT_MAX };
 	Ling::WinBase* win{ nullptr };
+	Microsoft::WRL::ComPtr<IUIAutomation> automation;
 	winrt::event_token onMouseMoveToken{};
+	winrt::event_token onKeyDownToken{};
+	winrt::event_token onMouseUpToken{};
 	float paddingTop{ 2.f }, paddingMargin{3.f};
 	MaskHit adjustHit{ MaskHit::None };
 	D2D1_RECT_F adjustStartRect{};
 	POINT adjustPressPos{};
+	COLORREF sampledColor{ RGB(0, 0, 0) };
+	POINT sampledPos{ INT_MAX, INT_MAX };
+	bool colorHex{ false };
+	bool detectUiElements{ false };
+	bool fullScreenToggle{ false };
+	bool legacyMagnifierSuppressed{ false };
+	bool initialDetectionDone{ false };
+	size_t historyCursor{ 0 };
 	static constexpr float minSize{ 4.f };
+	static std::vector<D2D1_RECT_F> regionHistory;
 };
