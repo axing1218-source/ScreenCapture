@@ -1,0 +1,39 @@
+name: Apply Capture UX V3
+
+on:
+  push:
+    branches:
+      - feature/snipaste-capture-ux
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/snipaste-capture-ux
+          fetch-depth: 0
+
+      - name: Apply patch
+        shell: pwsh
+        run: python tools/apply_capture_v3.py
+
+      - name: Verify patch
+        shell: pwsh
+        run: |
+          git diff --check
+          git diff -- Src/Win/CutMask.cpp Src/Win/CutMask.h
+
+      - name: Commit patched source and remove temporary patch files
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Src/Win/CutMask.cpp Src/Win/CutMask.h
+          git rm tools/apply_capture_v3.py .github/workflows/apply-capture-v3.yml
+          git commit -m "Refine Snipaste-style capture overlays"
+          git push origin HEAD:feature/snipaste-capture-ux
