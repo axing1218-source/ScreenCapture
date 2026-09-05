@@ -446,8 +446,11 @@ void WinCap::onUp(POINT pos, bool isRight)
             return;
         }
         stage = CapStage::Adjust;
-        refresh();  // 收掉放大镜
+        refresh();
         makeToolCap();
+        // ToolCap is a separate topmost window. Raise the magnifier after it is
+        // created so the magnifier can visually cover the toolbar when they overlap.
+        cutMask->syncMagnifier(pos);
     }
     else if (stage == CapStage::Adjust) {
         isPress = false;
