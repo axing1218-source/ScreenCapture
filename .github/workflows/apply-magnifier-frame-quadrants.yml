@@ -1,0 +1,67 @@
+name: Apply Magnifier Frame And Quadrants
+
+on:
+  push:
+    branches:
+      - feature/snipaste-capture-ux
+    paths:
+      - .github/workflows/apply-magnifier-frame-quadrants.yml
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/snipaste-capture-ux
+          fetch-depth: 0
+      - name: Patch magnifier frame and drag quadrants
+        shell: python
+        run: |
+          from pathlib import Path
+          path = Path('Src/Win/CutMask.cpp')
+          text = path.read_text(encoding='utf-8')
+
+          old = '''    // Cross arms end at the OUTSIDE edge of the black frame; nothing is\n    // painted across the transparent center target.\n    ctx->FillRectangle(D2D1::RectF(left, cellCenterY - crossHalf, frameL, cellCenterY + crossHalf), brushAccentSoft.Get());\n    ctx->FillRectangle(D2D1::RectF(frameR, cellCenterY - crossHalf, left + panelW, cellCenterY + crossHalf), brushAccentSoft.Get());\n    ctx->FillRectangle(D2D1::RectF(cellCenterX - crossHalf, top, cellCenterX + crossHalf, frameT), brushAccentSoft.Get());\n    ctx->FillRectangle(D2D1::RectF(cellCenterX - crossHalf, frameB, cellCenterX + crossHalf, top + imageH), brushAccentSoft.Get());\n'''
+          new = '''    // While the user is actively dragging a new capture, keep the top-left\n    // magnifier quadrant fully clear and de-emphasize the other three with a\n    // translucent black layer. The center target and cross bands are excluded\n    // so the sampled pixel remains completely unobscured.\n    if (cap->stage == WinCap::CapStage::Select && cap->isPress) {\n        ComPtr<ID2D1SolidColorBrush> quadrantShade;\n        ctx->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black, .40f), quadrantShade.GetAddressOf());\n        if (quadrantShade) {\n            ctx->FillRectangle(D2D1::RectF(frameR, top, left + panelW, frameT), quadrantShade.Get());\n            ctx->FillRectangle(D2D1::RectF(left, frameB, frameL, top + imageH), quadrantShade.Get());\n            ctx->FillRectangle(D2D1::RectF(frameR, frameB, left + panelW, top + imageH), quadrantShade.Get());\n        }\n    }\n\n    // Cross arms end at the OUTSIDE edge of the black frame; nothing is\n    // painted across the transparent center target.\n    ctx->FillRectangle(D2D1::RectF(left, cellCenterY - crossHalf, frameL, cellCenterY + crossHalf), brushAccentSoft.Get());\n    ctx->FillRectangle(D2D1::RectF(frameR, cellCenterY - crossHalf, left + panelW, cellCenterY + crossHalf), brushAccentSoft.Get());\n    ctx->FillRectangle(D2D1::RectF(cellCenterX - crossHalf, top, cellCenterX + crossHalf, frameT), brushAccentSoft.Get());\n    ctx->FillRectangle(D2D1::RectF(cellCenterX - crossHalf, frameB, cellCenterX + crossHalf, top + imageH), brushAccentSoft.Get());\n'''
+          if old not in text:
+              raise SystemExit('Cross-arm target block not found')
+          text = text.replace(old, new, 1)
+
+          old2 = '''    ctx->SetAntialiasMode(oldAA);\n\n    ctx->DrawRectangle(imageRect, brushPanelBorder.Get(), std::max(1.f, scale));\n\n    const COLORREF color = sampleCapturedPixel(live);\n'''
+          new2 = '''    // Give the magnifier image border the same treatment as the center target:\n    // one physical pixel, pure black, hard edged, four equal bars, transparent\n    // interior. This avoids the fuzzy/asymmetric rasterization of DrawRectangle.\n    const float hardBorder = 1.f;\n    auto fillHardFrame = [&](const D2D1_RECT_F& r) {\n        ctx->FillRectangle(D2D1::RectF(r.left, r.top, r.right, r.top + hardBorder), brushCenterBorder.Get());\n        ctx->FillRectangle(D2D1::RectF(r.left, r.bottom - hardBorder, r.right, r.bottom), brushCenterBorder.Get());\n        ctx->FillRectangle(D2D1::RectF(r.left, r.top + hardBorder, r.left + hardBorder, r.bottom - hardBorder), brushCenterBorder.Get());\n        ctx->FillRectangle(D2D1::RectF(r.right - hardBorder, r.top + hardBorder, r.right, r.bottom - hardBorder), brushCenterBorder.Get());\n    };\n    fillHardFrame(imageRect);\n    ctx->SetAntialiasMode(oldAA);\n\n    const COLORREF color = sampleCapturedPixel(live);\n'''
+          if old2 not in text:
+              raise SystemExit('Image border block not found')
+          text = text.replace(old2, new2, 1)
+
+          old3 = '''    drawLine(L"C  复制颜色值", infoTop + 60.f * scale, 10.5f);\n    drawLine(L"Shift  切换 RGB/HEX", infoTop + 82.f * scale, 10.5f);\n    ctx->DrawRectangle(panelRect, brushPanelBorder.Get(), std::max(1.f, scale));\n}\n'''
+          new3 = '''    drawLine(L"C  复制颜色值", infoTop + 60.f * scale, 10.5f);\n    drawLine(L"Shift  切换 RGB/HEX", infoTop + 82.f * scale, 10.5f);\n\n    // Outer magnifier frame: same 1px pure-black hard-edge construction.\n    const auto oldPanelAA = ctx->GetAntialiasMode();\n    ctx->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);\n    fillHardFrame(panelRect);\n    ctx->SetAntialiasMode(oldPanelAA);\n}\n'''
+          if old3 not in text:
+              raise SystemExit('Panel border block not found')
+          text = text.replace(old3, new3, 1)
+
+          path.write_text(text, encoding='utf-8')
+      - name: Commit source change
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Src/Win/CutMask.cpp
+          git commit -m "Refine magnifier frame and drag quadrants"
+          git push origin HEAD:feature/snipaste-capture-ux
+      - name: Build updated feature branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh workflow run starcap-direct-build.yml --ref feature/snipaste-capture-ux
+      - name: Remove temporary workflow
+        shell: bash
+        run: |
+          git pull --rebase origin feature/snipaste-capture-ux
+          git rm .github/workflows/apply-magnifier-frame-quadrants.yml
+          git commit -m "Remove temporary magnifier frame workflow"
+          git push origin HEAD:feature/snipaste-capture-ux
