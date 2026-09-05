@@ -63,8 +63,6 @@ CutMask::CutMask(Ling::WinBase* win) : win{ win }
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xAFC2CE, .95f), brushKeyBorder.GetAddressOf());
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x2080F0, .30f), brushAccentSoft.GetAddressOf());
 
-	// UI Automation 只在用户按 Tab 切到“检测界面元素”后使用。
-	// 创建失败时仍然有原生 child HWND 的降级检测，不影响普通窗口吸附。
 	CoCreateInstance(CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER,
 		IID_PPV_ARGS(automation.ReleaseAndGetAddressOf()));
 
@@ -118,7 +116,6 @@ void CutMask::initWinRect()
 				COLORREF key{}; BYTE alpha{ 255 }; DWORD flags{};
 				if (GetLayeredWindowAttributes(hwnd, &key, &alpha, &flags) &&
 					(flags & LWA_ALPHA) && alpha == 0) return TRUE;
-				// 与 Snipaste 的“忽略不可点击透明窗口”思路一致：纯穿透层不抢吸附。
 				if (exStyle & WS_EX_TRANSPARENT) return TRUE;
 			}
 
@@ -189,8 +186,6 @@ D2D1_RECT_F CutMask::detectNativeChildRect(HWND hwnd, POINT localPos, const D2D1
 
 D2D1_RECT_F CutMask::detectUiElementRect(HWND hwnd, POINT localPos, const D2D1_RECT_F& fallback)
 {
-	// 先走 UI Automation Control View。现代 Win11/UWP/浏览器里很多“元素”根本没有 child HWND，
-	// 这是单纯 ChildWindowFromPoint 做不到的部分。
 	if (automation && hwnd) {
 		ComPtr<IUIAutomationElement> current;
 		if (SUCCEEDED(automation->ElementFromHandle(hwnd, current.GetAddressOf())) && current) {
@@ -237,8 +232,6 @@ D2D1_RECT_F CutMask::detectUiElementRect(HWND hwnd, POINT localPos, const D2D1_R
 			if (validRect(best) && rectArea(best) < rectArea(fallback) * .995f) return best;
 		}
 	}
-
-	// UIA 不可用/应用未暴露元素时，至少还能识别传统 Win32 child HWND。
 	return detectNativeChildRect(hwnd, localPos, fallback);
 }
 
@@ -248,8 +241,6 @@ D2D1_RECT_F CutMask::detectRegionAt(POINT pos, HWND* matchedWindow)
 	for (const auto& item : winRect) {
 		if (!pointInRect(item.rect, pos)) continue;
 
-		// 桌面壳窗口通常覆盖整个虚拟桌面。Snipaste 在桌面空白处的体验是锁定“当前屏幕”，
-		// 而不是多屏拼成一个超大矩形，所以对 Progman / WorkerW 单独处理。
 		wchar_t cls[96]{};
 		GetClassNameW(item.hwnd, cls, (int)std::size(cls));
 		if (wcscmp(cls, L"Progman") == 0 || wcscmp(cls, L"WorkerW") == 0)
@@ -469,8 +460,6 @@ COLORREF CutMask::sampleCapturedPixel(POINT pos)
 		}
 	}
 
-	// 极少数显卡驱动不允许 staging bitmap 直接 CopyFromBitmap，退回屏幕 DC。
-	// 正常路径始终读截图开始时缓存的 screenImg，因此不会把遮罩/放大镜本身采进去。
 	POINT screen{ pos.x + win->x, pos.y + win->y };
 	HDC dc = GetDC(nullptr);
 	if (dc) {
@@ -495,7 +484,6 @@ void CutMask::paintMagnifier(ID2D1DeviceContext* ctx)
 	if (!cap || !cap->screenImg) return;
 	if (cap->stage != WinCap::CapStage::Select && cap->stage != WinCap::CapStage::Adjust) return;
 
-	// Snipaste 风格：150x100 左右的像素窗，中央像素对应当前光标；下方是一体化信息区。
 	const int cols = 15, rows = 10;
 	const float cell = std::max(8.f, 10.f * win->dpi);
 	const float imageW = cols * cell;
@@ -538,7 +526,6 @@ void CutMask::paintMagnifier(ID2D1DeviceContext* ctx)
 			D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &src);
 	}
 
-	// 中央一行/一列用主题蓝半透明覆盖，再给中心像素一圈白边，视觉上与 Snipaste 接近。
 	const float cx = left + centerCol * cell;
 	const float cy = top + centerRow * cell;
 	ctx->FillRectangle(D2D1::RectF(cx, top, cx + cell, top + imageH), brushAccentSoft.Get());
@@ -619,9 +606,6 @@ void CutMask::suppressLegacyMagnifier(ID2D1DeviceContext* ctx)
 {
 	auto* cap = static_cast<WinCap*>(win);
 	if (!cap || !ctx) return;
-	// WinCap 原来的取色器还会在 paintPix() 里执行。这里不改它的老代码路径，
-	// 只把三支画刷换成透明并清空源矩形，然后由本类完整接管显示。
-	// 这样长图/录屏等其它逻辑完全不受影响。
 	if (!legacyMagnifierSuppressed) {
 		ComPtr<ID2D1SolidColorBrush> transparent;
 		ctx->CreateSolidColorBrush(D2D1::ColorF(0, 0.f), transparent.GetAddressOf());
@@ -640,7 +624,6 @@ void CutMask::paint(ID2D1DeviceContext* ctx)
 	if (!ctx) return;
 	suppressLegacyMagnifier(ctx);
 
-	// 第一次进入截图就立即锁定光标下的窗口/当前显示器，不要求用户先晃一下鼠标。
 	if (!initialDetectionDone) {
 		initialDetectionDone = true;
 		POINT p{};
@@ -698,11 +681,11 @@ void CutMask::moveCursorBy(int dx, int dy)
 {
 	POINT p{};
 	GetCursorPos(&p);
-	const int minX = win->x, minY = win->y;
-	const int maxX = win->x + (int)std::lround(win->w) - 1;
-	const int maxY = win->y + (int)std::lround(win->h) - 1;
-	p.x = std::clamp(p.x + dx, minX, maxX);
-	p.y = std::clamp(p.y + dy, minY, maxY);
+	const LONG minX = (LONG)win->x, minY = (LONG)win->y;
+	const LONG maxX = (LONG)(win->x + (int)std::lround(win->w) - 1);
+	const LONG maxY = (LONG)(win->y + (int)std::lround(win->h) - 1);
+	p.x = std::clamp<LONG>(p.x + (LONG)dx, minX, maxX);
+	p.y = std::clamp<LONG>(p.y + (LONG)dy, minY, maxY);
 	SetCursorPos(p.x, p.y);
 }
 
