@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <dwmapi.h>
+#include <imm.h>
 #include <UIAutomation.h>
 #include <include/Ling.h>
 #include "CutMask.h"
@@ -12,6 +13,7 @@
 #include "../StarCapOcr.h"
 
 #pragma comment(lib, "Uiautomationcore.lib")
+#pragma comment(lib, "Imm32.lib")
 
 using namespace Microsoft::WRL;
 
@@ -43,6 +45,13 @@ namespace
 			std::lround(a.right) == std::lround(b.right) &&
 			std::lround(a.bottom) == std::lround(b.bottom);
 	}
+
+	D2D1_RECT_F rectFromScreenRect(const RECT& r, const Ling::WinBase* win)
+	{
+		return D2D1::RectF(
+			(float)(r.left - win->x), (float)(r.top - win->y),
+			(float)(r.right - win->x), (float)(r.bottom - win->y));
+	}
 }
 
 CutMask::CutMask(Ling::WinBase* win) : win{ win }
@@ -58,10 +67,11 @@ CutMask::CutMask(Ling::WinBase* win) : win{ win }
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x2080F0), brushBorder.GetAddressOf());
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x2080F0), brushHandle.GetAddressOf());
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushHandleOutline.GetAddressOf());
-	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x062536, .96f), brushPanelBg.GetAddressOf());
-	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xAFC2CE, .90f), brushPanelBorder.GetAddressOf());
-	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xAFC2CE, .95f), brushKeyBorder.GetAddressOf());
-	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x2080F0, .30f), brushAccentSoft.GetAddressOf());
+	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x003043), brushPanelBg.GetAddressOf());
+	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xAFC2CE, .92f), brushPanelBorder.GetAddressOf());
+	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xAFC2CE, .96f), brushKeyBorder.GetAddressOf());
+	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x2080F0, .28f), brushAccentSoft.GetAddressOf());
+	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::Black), brushCenterBorder.GetAddressOf());
 
 	CoCreateInstance(CLSID_CUIAutomation, nullptr, CLSCTX_INPROC_SERVER,
 		IID_PPV_ARGS(automation.ReleaseAndGetAddressOf()));
@@ -106,11 +116,9 @@ void CutMask::initWinRect()
 	EnumWindows([](HWND hwnd, LPARAM lparam)
 		{
 			if (!hwnd || !IsWindowVisible(hwnd) || IsIconic(hwnd)) return TRUE;
-
 			BOOL cloaked = FALSE;
 			DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked));
 			if (cloaked) return TRUE;
-
 			const auto exStyle = (DWORD)GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
 			if ((exStyle & WS_EX_LAYERED) != 0) {
 				COLORREF key{}; BYTE alpha{ 255 }; DWORD flags{};
@@ -118,13 +126,11 @@ void CutMask::initWinRect()
 					(flags & LWA_ALPHA) && alpha == 0) return TRUE;
 				if (exStyle & WS_EX_TRANSPARENT) return TRUE;
 			}
-
 			RECT rect{};
 			if (FAILED(DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &rect, sizeof(rect)))) {
 				if (!GetWindowRect(hwnd, &rect)) return TRUE;
 			}
 			if (rect.right - rect.left <= 3 || rect.bottom - rect.top <= 3) return TRUE;
-
 			auto self = reinterpret_cast<CutMask*>(lparam);
 			auto host = self->win;
 			const LONG hostL = host->x, hostT = host->y;
@@ -135,7 +141,6 @@ void CutMask::initWinRect()
 			rect.right = std::min(rect.right, hostR);
 			rect.bottom = std::min(rect.bottom, hostB);
 			if (rect.right - rect.left <= 3 || rect.bottom - rect.top <= 3) return TRUE;
-
 			WindowCandidate item;
 			item.hwnd = hwnd;
 			item.rect = D2D1::RectF((float)(rect.left - hostL), (float)(rect.top - hostT),
@@ -163,7 +168,6 @@ D2D1_RECT_F CutMask::detectNativeChildRect(HWND hwnd, POINT localPos, const D2D1
 	HWND current = hwnd;
 	RECT best{};
 	if (!GetWindowRect(current, &best)) return fallback;
-
 	for (int depth = 0; depth < 12; ++depth) {
 		POINT client = screenPos;
 		if (!ScreenToClient(current, &client)) break;
@@ -177,60 +181,65 @@ D2D1_RECT_F CutMask::detectNativeChildRect(HWND hwnd, POINT localPos, const D2D1
 		best = childRect;
 		current = child;
 	}
-
-	D2D1_RECT_F r = D2D1::RectF((float)(best.left - win->x), (float)(best.top - win->y),
-		(float)(best.right - win->x), (float)(best.bottom - win->y));
+	auto r = rectFromScreenRect(best, win);
 	const auto clipped = intersectRectF(r, fallback);
 	return validRect(clipped) ? clipped : fallback;
 }
 
 D2D1_RECT_F CutMask::detectUiElementRect(HWND hwnd, POINT localPos, const D2D1_RECT_F& fallback)
 {
-	if (automation && hwnd) {
-		ComPtr<IUIAutomationElement> current;
-		if (SUCCEEDED(automation->ElementFromHandle(hwnd, current.GetAddressOf())) && current) {
-			ComPtr<IUIAutomationTreeWalker> walker;
-			automation->get_ControlViewWalker(walker.GetAddressOf());
-			POINT screenPos{ localPos.x + win->x, localPos.y + win->y };
-			D2D1_RECT_F best = fallback;
-
-			for (int depth = 0; walker && current && depth < 14; ++depth) {
-				ComPtr<IUIAutomationElement> child;
-				if (FAILED(walker->GetFirstChildElement(current.Get(), child.GetAddressOf())) || !child) break;
-
-				ComPtr<IUIAutomationElement> bestChild;
-				D2D1_RECT_F bestChildRect{};
-				float bestChildArea = FLT_MAX;
-				int siblingCount = 0;
-				while (child && siblingCount++ < 256) {
-					BOOL offscreen = FALSE;
-					RECT rr{};
-					if (SUCCEEDED(child->get_CurrentIsOffscreen(&offscreen)) && !offscreen &&
-						SUCCEEDED(child->get_CurrentBoundingRectangle(&rr)) &&
-						rr.right - rr.left >= 3 && rr.bottom - rr.top >= 3 && PtInRect(&rr, screenPos)) {
-						D2D1_RECT_F local = D2D1::RectF((float)(rr.left - win->x), (float)(rr.top - win->y),
-							(float)(rr.right - win->x), (float)(rr.bottom - win->y));
-						local = intersectRectF(local, fallback);
-						const float area = rectArea(local);
-						if (validRect(local) && area > 0.f && area < bestChildArea) {
-							bestChildArea = area;
-							bestChildRect = local;
-							bestChild = child;
-						}
-					}
-
-					ComPtr<IUIAutomationElement> next;
-					if (FAILED(walker->GetNextSiblingElement(child.Get(), next.GetAddressOf()))) break;
-					child = next;
-				}
-
-				if (!bestChild) break;
-				best = bestChildRect;
-				current = bestChild;
-			}
-
-			if (validRect(best) && rectArea(best) < rectArea(fallback) * .995f) return best;
+	if (!automation || !hwnd) return detectNativeChildRect(hwnd, localPos, fallback);
+	POINT screenPos{ localPos.x + win->x, localPos.y + win->y };
+	ComPtr<IUIAutomationElement> direct;
+	if (SUCCEEDED(automation->ElementFromPoint(screenPos, direct.GetAddressOf())) && direct) {
+		UIA_HWND nativeHandle{};
+		RECT rr{};
+		BOOL offscreen = FALSE;
+		direct->get_CurrentNativeWindowHandle(&nativeHandle);
+		if ((HWND)nativeHandle != win->hwnd &&
+			SUCCEEDED(direct->get_CurrentIsOffscreen(&offscreen)) && !offscreen &&
+			SUCCEEDED(direct->get_CurrentBoundingRectangle(&rr))) {
+			auto local = intersectRectF(rectFromScreenRect(rr, win), fallback);
+			const float area = rectArea(local);
+			if (validRect(local) && area >= 36.f && area < rectArea(fallback) * .995f)
+				return local;
 		}
+	}
+	ComPtr<IUIAutomationElement> current;
+	if (SUCCEEDED(automation->ElementFromHandle(hwnd, current.GetAddressOf())) && current) {
+		ComPtr<IUIAutomationTreeWalker> walker;
+		automation->get_ControlViewWalker(walker.GetAddressOf());
+		D2D1_RECT_F best = fallback;
+		for (int depth = 0; walker && current && depth < 14; ++depth) {
+			ComPtr<IUIAutomationElement> child;
+			if (FAILED(walker->GetFirstChildElement(current.Get(), child.GetAddressOf())) || !child) break;
+			ComPtr<IUIAutomationElement> bestChild;
+			D2D1_RECT_F bestChildRect{};
+			float bestChildArea = FLT_MAX;
+			int siblingCount = 0;
+			while (child && siblingCount++ < 256) {
+				BOOL offscreen = FALSE;
+				RECT rr{};
+				if (SUCCEEDED(child->get_CurrentIsOffscreen(&offscreen)) && !offscreen &&
+					SUCCEEDED(child->get_CurrentBoundingRectangle(&rr)) &&
+					rr.right - rr.left >= 3 && rr.bottom - rr.top >= 3 && PtInRect(&rr, screenPos)) {
+					auto local = intersectRectF(rectFromScreenRect(rr, win), fallback);
+					const float area = rectArea(local);
+					if (validRect(local) && area >= 36.f && area < bestChildArea) {
+						bestChildArea = area;
+						bestChildRect = local;
+						bestChild = child;
+					}
+				}
+				ComPtr<IUIAutomationElement> next;
+				if (FAILED(walker->GetNextSiblingElement(child.Get(), next.GetAddressOf()))) break;
+				child = next;
+			}
+			if (!bestChild) break;
+			best = bestChildRect;
+			current = bestChild;
+		}
+		if (validRect(best) && rectArea(best) < rectArea(fallback) * .995f) return best;
 	}
 	return detectNativeChildRect(hwnd, localPos, fallback);
 }
@@ -240,12 +249,10 @@ D2D1_RECT_F CutMask::detectRegionAt(POINT pos, HWND* matchedWindow)
 	if (matchedWindow) *matchedWindow = nullptr;
 	for (const auto& item : winRect) {
 		if (!pointInRect(item.rect, pos)) continue;
-
 		wchar_t cls[96]{};
 		GetClassNameW(item.hwnd, cls, (int)std::size(cls));
 		if (wcscmp(cls, L"Progman") == 0 || wcscmp(cls, L"WorkerW") == 0)
 			return monitorRectAt(pos);
-
 		if (matchedWindow) *matchedWindow = item.hwnd;
 		return detectUiElements ? detectUiElementRect(item.hwnd, pos, item.rect) : item.rect;
 	}
@@ -278,23 +285,21 @@ void CutMask::makeLayout()
 	const int width = std::max(0, (int)std::lround(maskRect.right - maskRect.left));
 	const int height = std::max(0, (int)std::lround(maskRect.bottom - maskRect.top));
 	const auto text = std::format(L"{} x {} px", width, height);
-	layout = Ling::D2D::get()->makeTextLayout(text, 10.f * win->dpi);
+	layout = Ling::D2D::get()->makeTextLayout(text, 11.f * win->dpi);
 	if (!layout) return;
-
 	DWRITE_TEXT_METRICS tm{};
 	layout->GetMetrics(&tm);
+	const float boxH = 28.f * win->dpi;
 	const float padX = 6.f * win->dpi;
-	const float padY = 3.f * win->dpi;
-	const float gap = 3.f * win->dpi;
-	const float boxW = tm.width + padX * 2;
-	const float boxH = tm.height + padY * 2;
+	const float gap = 2.f * win->dpi;
+	const float boxW = tm.width + padX * 2.f;
 	float left = maskRect.left;
 	float top = maskRect.top - gap - boxH;
 	if (top < 0.f) top = maskRect.top;
 	if (left + boxW > win->w) left = std::max(0.f, win->w - boxW);
 	layoutRect = D2D1::RectF(left, top, left + boxW, top + boxH);
-	layout->SetMaxWidth(boxW - padX * 2);
-	layout->SetMaxHeight(boxH - padY * 2);
+	layout->SetMaxWidth(std::max(1.f, boxW - padX * 2.f));
+	layout->SetMaxHeight(boxH);
 }
 
 void CutMask::startMakeRect(POINT pos)
@@ -347,7 +352,6 @@ MaskHit CutMask::hitTest(POINT pos) const
 		const float dx = px - p.x, dy = py - p.y;
 		if (dx * dx + dy * dy <= hitRadius2) return hit;
 	}
-
 	const float edge = std::max(4.f, 4.f * win->dpi);
 	const auto& r = maskRect;
 	const bool withinX = px >= r.left - edge && px <= r.right + edge;
@@ -436,36 +440,30 @@ COLORREF CutMask::sampleCapturedPixel(POINT pos)
 {
 	if (pos.x == sampledPos.x && pos.y == sampledPos.y) return sampledColor;
 	auto* cap = static_cast<WinCap*>(win);
-	if (!cap || !cap->screenImg || pos.x < 0 || pos.y < 0 || pos.x >= win->w || pos.y >= win->h)
+	if (!cap || !cap->screenImg || pos.x < 0 || pos.y < 0 ||
+		pos.x >= (int)std::lround(win->w) || pos.y >= (int)std::lround(win->h))
 		return sampledColor;
-
-	auto ctx = Ling::D2D::get()->deviceContext.Get();
-	D2D1_BITMAP_PROPERTIES1 props{};
-	props.pixelFormat = cap->screenImg->GetPixelFormat();
-	props.dpiX = 96.f; props.dpiY = 96.f;
-	props.bitmapOptions = D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW;
-	ComPtr<ID2D1Bitmap1> cpu;
-	if (SUCCEEDED(ctx->CreateBitmap(D2D1::SizeU(1, 1), nullptr, 0, &props, cpu.GetAddressOf())) && cpu) {
-		D2D1_POINT_2U dst{ 0, 0 };
-		D2D1_RECT_U src{ (UINT32)pos.x, (UINT32)pos.y, (UINT32)pos.x + 1, (UINT32)pos.y + 1 };
-		if (SUCCEEDED(cpu->CopyFromBitmap(&dst, cap->screenImg.Get(), &src))) {
-			D2D1_MAPPED_RECT mapped{};
-			if (SUCCEEDED(cpu->Map(D2D1_MAP_OPTIONS_READ, &mapped))) {
-				const BYTE b = mapped.bits[0], g = mapped.bits[1], r = mapped.bits[2];
-				cpu->Unmap();
-				sampledColor = RGB(r, g, b);
-				sampledPos = pos;
-				return sampledColor;
-			}
+	if (!screenCpuCopy) {
+		auto ctx = Ling::D2D::get()->deviceContext.Get();
+		D2D1_BITMAP_PROPERTIES1 props{};
+		props.pixelFormat = cap->screenImg->GetPixelFormat();
+		props.dpiX = 96.f;
+		props.dpiY = 96.f;
+		props.bitmapOptions = D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW;
+		auto size = cap->screenImg->GetPixelSize();
+		if (FAILED(ctx->CreateBitmap(size, nullptr, 0, &props, screenCpuCopy.GetAddressOf())) || !screenCpuCopy)
+			return sampledColor;
+		if (FAILED(screenCpuCopy->CopyFromBitmap(nullptr, cap->screenImg.Get(), nullptr))) {
+			screenCpuCopy.Reset();
+			return sampledColor;
 		}
 	}
-
-	POINT screen{ pos.x + win->x, pos.y + win->y };
-	HDC dc = GetDC(nullptr);
-	if (dc) {
-		sampledColor = GetPixel(dc, screen.x, screen.y);
-		ReleaseDC(nullptr, dc);
-	}
+	D2D1_MAPPED_RECT mapped{};
+	if (FAILED(screenCpuCopy->Map(D2D1_MAP_OPTIONS_READ, &mapped))) return sampledColor;
+	const BYTE* px = mapped.bits + (size_t)pos.y * mapped.pitch + (size_t)pos.x * 4;
+	const BYTE b = px[0], g = px[1], r = px[2];
+	screenCpuCopy->Unmap();
+	sampledColor = RGB(r, g, b);
 	sampledPos = pos;
 	return sampledColor;
 }
@@ -479,127 +477,136 @@ std::wstring CutMask::colorText(COLORREF color) const
 
 void CutMask::paintMagnifier(ID2D1DeviceContext* ctx)
 {
-	if (!ctx || hideLabel || cursorPos.x == INT_MAX || cursorPos.y == INT_MAX) return;
+	if (!ctx || hideLabel) return;
 	auto* cap = static_cast<WinCap*>(win);
 	if (!cap || !cap->screenImg) return;
 	if (cap->stage != WinCap::CapStage::Select && cap->stage != WinCap::CapStage::Adjust) return;
-
-	const int cols = 15, rows = 10;
-	const float cell = std::max(8.f, 10.f * win->dpi);
-	const float imageW = cols * cell;
-	const float imageH = rows * cell;
-	const float infoH = 82.f * win->dpi;
+	POINT live{};
+	GetCursorPos(&live);
+	ScreenToClient(win->hwnd, &live);
+	cursorPos = live;
+	if (live.x < 0 || live.y < 0 || live.x >= (int)std::lround(win->w) || live.y >= (int)std::lround(win->h))
+		return;
+	const float scale = win->dpi;
+	const int cols = 15;
+	const int rows = 10;
+	const float imageW = 179.f * scale;
+	const float imageH = 120.f * scale;
+	const float infoH = 97.f * scale;
 	const float panelW = imageW;
 	const float panelH = imageH + infoH;
-
-	float left = cursorPos.x - imageW * .5f;
-	float top = cursorPos.y - imageH * .5f;
-	if (left < 0.f) left = std::min(win->w - panelW, cursorPos.x + 14.f * win->dpi);
-	if (left + panelW > win->w) left = std::max(0.f, cursorPos.x - 14.f * win->dpi - panelW);
-	if (top < 0.f) top = std::min(win->h - panelH, cursorPos.y + 14.f * win->dpi);
-	if (top + panelH > win->h) top = std::max(0.f, cursorPos.y - 14.f * win->dpi - panelH);
+	const float cellW = imageW / cols;
+	const float cellH = imageH / rows;
+	const float dx = 8.f * scale;
+	const float dy = 20.f * scale;
+	float left = live.x + dx;
+	float top = live.y + dy;
+	if (left + panelW > win->w) left = live.x - dx - panelW;
+	if (top + panelH > win->h) top = live.y - dy - panelH;
 	left = std::clamp(left, 0.f, std::max(0.f, win->w - panelW));
 	top = std::clamp(top, 0.f, std::max(0.f, win->h - panelH));
-
 	const auto imageRect = D2D1::RectF(left, top, left + imageW, top + imageH);
 	const auto panelRect = D2D1::RectF(left, top, left + panelW, top + panelH);
 	ctx->FillRectangle(panelRect, brushPanelBg.Get());
-
 	const int centerCol = cols / 2;
 	const int centerRow = rows / 2;
-	const int wantL = cursorPos.x - centerCol;
-	const int wantT = cursorPos.y - centerRow;
+	const int wantL = live.x - centerCol;
+	const int wantT = live.y - centerRow;
 	const int validL = std::max(wantL, 0);
 	const int validT = std::max(wantT, 0);
 	const int validR = std::min(wantL + cols, (int)std::lround(win->w));
 	const int validB = std::min(wantT + rows, (int)std::lround(win->h));
-
 	if (validR > validL && validB > validT) {
 		D2D1_RECT_F src{ (float)validL, (float)validT, (float)validR, (float)validB };
 		D2D1_RECT_F dst{
-			left + (validL - wantL) * cell,
-			top + (validT - wantT) * cell,
-			left + (validR - wantL) * cell,
-			top + (validB - wantT) * cell
+			left + (validL - wantL) * cellW,
+			top + (validT - wantT) * cellH,
+			left + (validR - wantL) * cellW,
+			top + (validB - wantT) * cellH
 		};
 		ctx->DrawBitmap(cap->screenImg.Get(), dst, 1.f,
 			D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &src);
 	}
-
-	const float cx = left + centerCol * cell;
-	const float cy = top + centerRow * cell;
-	ctx->FillRectangle(D2D1::RectF(cx, top, cx + cell, top + imageH), brushAccentSoft.Get());
-	ctx->FillRectangle(D2D1::RectF(left, cy, left + imageW, cy + cell), brushAccentSoft.Get());
-	ctx->DrawRectangle(D2D1::RectF(cx + 1.f, cy + 1.f, cx + cell - 1.f, cy + cell - 1.f),
-		brushText.Get(), std::max(1.f, win->dpi));
-	ctx->DrawRectangle(imageRect, brushPanelBorder.Get(), std::max(1.f, win->dpi));
-
-	const COLORREF color = sampleCapturedPixel(cursorPos);
+	const float cx = left + centerCol * cellW;
+	const float cy = top + centerRow * cellH;
+	ctx->FillRectangle(D2D1::RectF(cx, top, cx + cellW, top + imageH), brushAccentSoft.Get());
+	ctx->FillRectangle(D2D1::RectF(left, cy, left + imageW, cy + cellH), brushAccentSoft.Get());
+	const auto centerCell = D2D1::RectF(cx, cy, cx + cellW, cy + cellH);
+	ctx->DrawRectangle(centerCell, brushCenterBorder.Get(), std::max(2.f, 2.f * scale));
+	ctx->DrawRectangle(D2D1::RectF(centerCell.left + 2.f * scale, centerCell.top + 2.f * scale,
+		centerCell.right - 2.f * scale, centerCell.bottom - 2.f * scale),
+		brushText.Get(), std::max(1.f, scale));
+	ctx->DrawRectangle(imageRect, brushPanelBorder.Get(), std::max(1.f, scale));
+	const COLORREF color = sampleCapturedPixel(live);
 	auto d2d = Ling::D2D::get();
 	auto drawLine = [&](const std::wstring& text, float y, float fontSize, float xOffset = 0.f) {
-		auto tl = d2d->makeTextLayout(text, fontSize * win->dpi);
+		auto tl = d2d->makeTextLayout(text, fontSize * scale);
 		if (!tl) return;
-		ctx->DrawTextLayout({ left + 8.f * win->dpi + xOffset, y }, tl.Get(), brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+		ctx->DrawTextLayout({ left + 9.f * scale + xOffset, y }, tl.Get(), brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 	};
-
 	const float infoTop = top + imageH;
-	const POINT screenPos{ cursorPos.x + win->x, cursorPos.y + win->y };
-	drawLine(std::format(L"({}, {})", screenPos.x, screenPos.y), infoTop + 7.f * win->dpi, 10.f);
-
-	const float swatchSize = 11.f * win->dpi;
-	const float swatchTop = infoTop + 29.f * win->dpi;
+	const POINT screenPos{ live.x + win->x, live.y + win->y };
+	drawLine(std::format(L"({}, {})", screenPos.x, screenPos.y), infoTop + 7.f * scale, 10.f);
+	const float swatchSize = 11.f * scale;
+	const float swatchTop = infoTop + 31.f * scale;
 	ComPtr<ID2D1SolidColorBrush> swatch;
 	ctx->CreateSolidColorBrush(D2D1::ColorF(
 		GetRValue(color) / 255.f, GetGValue(color) / 255.f, GetBValue(color) / 255.f, 1.f), swatch.GetAddressOf());
-	if (swatch) ctx->FillRectangle(D2D1::RectF(left + 9.f * win->dpi, swatchTop,
-		left + 9.f * win->dpi + swatchSize, swatchTop + swatchSize), swatch.Get());
-	ctx->DrawRectangle(D2D1::RectF(left + 9.f * win->dpi, swatchTop,
-		left + 9.f * win->dpi + swatchSize, swatchTop + swatchSize), brushText.Get(), std::max(1.f, win->dpi));
-	drawLine(colorText(color), infoTop + 27.f * win->dpi, 10.f, 27.f * win->dpi);
-	drawLine(L"按 C 复制颜色值", infoTop + 47.f * win->dpi, 9.f);
-	drawLine(L"按 X 切换 RGB/HEX", infoTop + 63.f * win->dpi, 9.f);
-	ctx->DrawRectangle(panelRect, brushPanelBorder.Get(), std::max(1.f, win->dpi));
+	if (swatch) ctx->FillRectangle(D2D1::RectF(left + 10.f * scale, swatchTop,
+		left + 10.f * scale + swatchSize, swatchTop + swatchSize), swatch.Get());
+	ctx->DrawRectangle(D2D1::RectF(left + 10.f * scale, swatchTop,
+		left + 10.f * scale + swatchSize, swatchTop + swatchSize),
+		brushText.Get(), std::max(1.f, scale));
+	drawLine(colorText(color), infoTop + 29.f * scale, 10.f, 29.f * scale);
+	drawLine(L"按 C 复制颜色值", infoTop + 52.f * scale, 9.f);
+	drawLine(L"按 Shift 切换 RGB/HEX", infoTop + 72.f * scale, 9.f);
+	ctx->DrawRectangle(panelRect, brushPanelBorder.Get(), std::max(1.f, scale));
 }
 
 void CutMask::paintHelp(ID2D1DeviceContext* ctx)
 {
 	if (!ctx || hideLabel) return;
 	auto* cap = static_cast<WinCap*>(win);
-	if (!cap || (cap->stage != WinCap::CapStage::Select && cap->stage != WinCap::CapStage::Adjust)) return;
-
+	if (!cap || cap->stage != WinCap::CapStage::Select) return;
 	const float scale = win->dpi;
-	const float panelW = 292.f * scale;
-	const float panelH = 150.f * scale;
-	const float margin = 10.f * scale;
-	const float left = margin;
-	const float top = std::max(0.f, win->h - panelH - margin);
+	const bool dragging = cap->isPress;
+	const float panelW = (dragging ? 298.f : 328.f) * scale;
+	const float panelH = (dragging ? 106.f : 199.f) * scale;
+	const float left = 14.f * scale;
+	const float top = std::max(0.f, win->h - 13.f * scale - panelH);
 	const auto panel = D2D1::RectF(left, top, left + panelW, top + panelH);
 	ctx->FillRectangle(panel, brushPanelBg.Get());
 	ctx->DrawRectangle(panel, brushPanelBorder.Get(), std::max(1.f, scale));
-
 	auto d2d = Ling::D2D::get();
 	auto drawRow = [&](float rowY, const std::vector<std::wstring>& keys, const std::wstring& desc) {
-		float x = left + 9.f * scale;
+		float x = left + 10.f * scale;
 		for (const auto& key : keys) {
-			auto keyLayout = d2d->makeTextLayout(key, 9.f * scale);
+			auto keyLayout = d2d->makeTextLayout(key, 10.f * scale);
 			if (!keyLayout) continue;
-			DWRITE_TEXT_METRICS km{}; keyLayout->GetMetrics(&km);
+			DWRITE_TEXT_METRICS km{};
+			keyLayout->GetMetrics(&km);
 			const float kw = std::max(18.f * scale, km.width + 8.f * scale);
 			const float kh = 17.f * scale;
-			ctx->DrawRectangle(D2D1::RectF(x, rowY, x + kw, rowY + kh), brushKeyBorder.Get(), std::max(1.f, scale));
-			ctx->DrawTextLayout({ x + (kw - km.width) * .5f, rowY + 1.f * scale }, keyLayout.Get(), brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+			ctx->DrawRectangle(D2D1::RectF(x, rowY, x + kw, rowY + kh),
+				brushKeyBorder.Get(), std::max(1.f, scale));
+			ctx->DrawTextLayout({ x + (kw - km.width) * .5f, rowY + 1.f * scale },
+				keyLayout.Get(), brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 			x += kw + 4.f * scale;
 		}
-		auto descLayout = d2d->makeTextLayout(desc, 9.f * scale);
-		if (descLayout) ctx->DrawTextLayout({ x + 5.f * scale, rowY + 1.f * scale }, descLayout.Get(), brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+		auto descLayout = d2d->makeTextLayout(desc, 10.f * scale);
+		if (descLayout) ctx->DrawTextLayout({ x + 6.f * scale, rowY + 1.f * scale },
+			descLayout.Get(), brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 	};
-
-	float y = top + 10.f * scale;
-	drawRow(y, { L"W",L"A",L"S",L"D" }, L"将鼠标指针移动 1 像素"); y += 25.f * scale;
-	drawRow(y, { L"Tab" }, L"切换检测窗口 / 检测界面元素"); y += 25.f * scale;
-	drawRow(y, { L"Ctrl",L"A" }, L"设置截屏区域为当前屏幕 / 全屏"); y += 25.f * scale;
-	drawRow(y, { L"R",L"Shift",L"R" }, L"使用上一次截屏的区域"); y += 25.f * scale;
-	drawRow(y, { L",",L"." }, L"回溯截屏区域历史");
+	const float firstY = top + (dragging ? 13.f : 14.f) * scale;
+	const float step = 31.f * scale;
+	drawRow(firstY + step * 0, { L"W",L"A",L"S",L"D" }, L"将鼠标指针移动 1 像素");
+	drawRow(firstY + step * 1, { L"Tab" }, L"切换检测窗口 / 检测界面元素");
+	drawRow(firstY + step * 2, { L"Ctrl",L"A" }, L"设置截屏区域为当前屏幕 / 全屏");
+	if (!dragging) {
+		drawRow(firstY + step * 3, { L"R",L"Shift",L"R" }, L"使用上一次截屏的区域");
+		drawRow(firstY + step * 4, { L",",L"." }, L"回溯截屏区域历史");
+		drawRow(firstY + step * 5, { L"C",L"Shift" }, L"复制颜色 / 切换 RGB/HEX");
+	}
 }
 
 void CutMask::suppressLegacyMagnifier(ID2D1DeviceContext* ctx)
@@ -622,8 +629,11 @@ void CutMask::suppressLegacyMagnifier(ID2D1DeviceContext* ctx)
 void CutMask::paint(ID2D1DeviceContext* ctx)
 {
 	if (!ctx) return;
+	if (!imeDisabled && win && win->hwnd) {
+		ImmAssociateContext(win->hwnd, nullptr);
+		imeDisabled = true;
+	}
 	suppressLegacyMagnifier(ctx);
-
 	if (!initialDetectionDone) {
 		initialDetectionDone = true;
 		POINT p{};
@@ -639,31 +649,29 @@ void CutMask::paint(ID2D1DeviceContext* ctx)
 			}
 		}
 	}
-
 	if (!hasRect()) {
 		paintMagnifier(ctx);
 		paintHelp(ctx);
 		return;
 	}
-
 	ctx->FillRectangle(D2D1::RectF(0.f, 0.f, win->w, maskRect.top), brushBg.Get());
 	ctx->FillRectangle(D2D1::RectF(0.f, maskRect.bottom, win->w, win->h), brushBg.Get());
 	ctx->FillRectangle(D2D1::RectF(0.f, maskRect.top, maskRect.left, maskRect.bottom), brushBg.Get());
 	ctx->FillRectangle(D2D1::RectF(maskRect.right, maskRect.top, win->w, maskRect.bottom), brushBg.Get());
-
 	if (strokeWidth > 0.f) {
 		const auto half = strokeWidth / 2.f;
 		ctx->DrawRectangle(D2D1::RectF(maskRect.left - half, maskRect.top - half,
 			maskRect.right + half, maskRect.bottom + half), brushBorder.Get(), strokeWidth);
 	}
-
 	if (!hideLabel && layout) {
 		ctx->FillRectangle(layoutRect, brushPanelBg.Get());
 		ctx->DrawRectangle(layoutRect, brushPanelBorder.Get(), std::max(1.f, win->dpi));
-		ctx->DrawTextLayout({ layoutRect.left + 6.f * win->dpi, layoutRect.top + 3.f * win->dpi },
+		DWRITE_TEXT_METRICS tm{};
+		layout->GetMetrics(&tm);
+		const float y = layoutRect.top + std::max(0.f, (layoutRect.bottom - layoutRect.top - tm.height) * .5f);
+		ctx->DrawTextLayout({ layoutRect.left + 6.f * win->dpi, y },
 			layout.Get(), brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 	}
-
 	paintHandles(ctx);
 	paintMagnifier(ctx);
 	paintHelp(ctx);
@@ -671,9 +679,13 @@ void CutMask::paint(ID2D1DeviceContext* ctx)
 
 void CutMask::copyCurrentColor()
 {
-	if (cursorPos.x == INT_MAX || cursorPos.y == INT_MAX) return;
-	const auto text = colorText(sampleCapturedPixel(cursorPos));
-	Ling::Util::setTextToClipboard(text);
+	if (!win || !win->hwnd) return;
+	POINT p{};
+	GetCursorPos(&p);
+	ScreenToClient(win->hwnd, &p);
+	if (p.x < 0 || p.y < 0 || p.x >= (int)std::lround(win->w) || p.y >= (int)std::lround(win->h)) return;
+	cursorPos = p;
+	Ling::Util::setTextToClipboard(colorText(sampleCapturedPixel(p)));
 	win->refresh();
 }
 
@@ -682,10 +694,10 @@ void CutMask::moveCursorBy(int dx, int dy)
 	POINT p{};
 	GetCursorPos(&p);
 	const LONG minX = (LONG)win->x, minY = (LONG)win->y;
-	const LONG maxX = (LONG)(win->x + (int)std::lround(win->w) - 1);
-	const LONG maxY = (LONG)(win->y + (int)std::lround(win->h) - 1);
-	p.x = std::clamp<LONG>(p.x + (LONG)dx, minX, maxX);
-	p.y = std::clamp<LONG>(p.y + (LONG)dy, minY, maxY);
+	const LONG maxX = (LONG)win->x + (LONG)std::lround(win->w) - 1;
+	const LONG maxY = (LONG)win->y + (LONG)std::lround(win->h) - 1;
+	p.x = std::clamp<LONG>(p.x + dx, minX, maxX);
+	p.y = std::clamp<LONG>(p.y + dy, minY, maxY);
 	SetCursorPos(p.x, p.y);
 }
 
@@ -739,21 +751,23 @@ void CutMask::handleCaptureKey(UINT key)
 	auto* cap = static_cast<WinCap*>(win);
 	if (!cap || hideLabel) return;
 	if (cap->stage != WinCap::CapStage::Select && cap->stage != WinCap::CapStage::Adjust) return;
-
 	const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
 	const bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+	const bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
 	if (!ctrl && !alt && key == 'C') {
 		copyCurrentColor();
 		return;
 	}
-	if (!ctrl && !alt && key == 'X') {
+	if (!ctrl && !alt && key == VK_SHIFT) {
 		colorHex = !colorHex;
 		win->refresh();
 		return;
 	}
 	if (!ctrl && !alt && cap->stage == WinCap::CapStage::Select && !cap->isPress && key == VK_TAB) {
 		detectUiElements = !detectUiElements;
-		POINT p{}; GetCursorPos(&p); ScreenToClient(win->hwnd, &p);
+		POINT p{};
+		GetCursorPos(&p);
+		ScreenToClient(win->hwnd, &p);
 		applyDetectedRect(detectRegionAt(p), true);
 		return;
 	}
@@ -776,7 +790,7 @@ void CutMask::handleCaptureKey(UINT key)
 		restoreHistory(1);
 		return;
 	}
-	if (!ctrl && !alt) {
+	if (!ctrl && !alt && !shift) {
 		if (key == 'W') moveCursorBy(0, -1);
 		else if (key == 'S') moveCursorBy(0, 1);
 		else if (key == 'A') moveCursorBy(-1, 0);
